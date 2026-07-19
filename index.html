@@ -156,6 +156,40 @@
   .btn-ghost{background:transparent;border:1px solid var(--border);color:var(--muted);}
   .btn-danger{background:var(--red-dim);color:var(--red);}
   .loading{color:var(--muted);text-align:center;padding:40px;font-size:14px;}
+
+  .tabs{display:flex;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:5px;margin-bottom:22px;}
+  .tab-btn{
+    flex:1;background:transparent;border:none;color:var(--muted);
+    padding:10px 8px;border-radius:9px;font-weight:700;font-size:13.5px;
+    cursor:pointer;font-family:inherit;transition:background 0.15s;
+  }
+  .tab-btn.active{background:var(--mint-dim);color:var(--mint);}
+
+  .rate-bar{
+    display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;
+    background:var(--surface);border:1px solid var(--border);border-radius:12px;
+    padding:12px 16px;margin-bottom:16px;font-size:13.5px;
+  }
+  .rate-bar .rate-val{color:var(--mint);font-weight:700;font-family:'Cairo',sans-serif;font-size:15px;}
+  .rate-bar .rate-time{color:var(--muted);font-size:11.5px;}
+  .icon-btn-sm{
+    background:transparent;border:1px solid var(--border);color:var(--muted);
+    padding:5px 10px;border-radius:8px;cursor:pointer;font-size:12px;font-family:inherit;
+  }
+  .icon-btn-sm:hover{color:var(--text);}
+
+  .calc-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;}
+  .calc-row{display:flex;gap:10px;margin-bottom:12px;}
+  .calc-row > div{flex:1;}
+  .result-box{
+    background:var(--surface-2);border:1px solid var(--border);border-radius:12px;
+    padding:16px;margin-top:18px;
+  }
+  .result-line{display:flex;justify-content:space-between;font-size:13.5px;padding:5px 0;color:var(--muted);}
+  .result-line.total{
+    border-top:1px solid var(--border);margin-top:8px;padding-top:12px;
+    font-size:17px;font-weight:800;color:var(--mint);font-family:'Cairo',sans-serif;
+  }
 </style>
 </head>
 <body>
@@ -165,7 +199,7 @@
     <h2 style="font-family:'Cairo',sans-serif;font-size:18px;margin:0 0 6px;color:#E8EAF0;">الرقم السري مطلوب</h2>
     <p style="color:#8A93A6;font-size:13px;margin:0 0 20px;">اكتب الرقم السري عشان تدخل على بيانات الاشتراكات</p>
     <input type="password" id="lockInput" placeholder="الرقم السري" style="width:100%;background:#1E2740;border:1px solid #2A3450;color:#E8EAF0;padding:11px 12px;border-radius:9px;font-size:15px;text-align:center;letter-spacing:2px;box-sizing:border-box;">
-    <p id="lockError" style="color:#F0576B;font-size:12.5px;margin:10px 0 0;display:none;">الرقم غلط .. انت مين ياعلق وداخل عندي ليه ؟؟</p>
+    <p id="lockError" style="color:#F0576B;font-size:12.5px;margin:10px 0 0;display:none;">الرقم غلط، حاول تاني</p>
     <label style="display:flex;align-items:center;gap:6px;justify-content:center;margin-top:14px;color:#8A93A6;font-size:12.5px;cursor:pointer;">
       <input type="checkbox" id="rememberMe" style="width:auto;">
       تذكرني على الجهاز ده لمدة ٧ أيام
@@ -213,11 +247,47 @@
   </div>
 </div>
 
+<div class="modal-bg" id="paymentModalBg">
+  <div class="modal">
+    <h2 id="paymentModalTitle">إضافة دفعة جديدة</h2>
+    <label>وصف الخدمة</label>
+    <input id="p_desc" placeholder="مثال: تصميم لوجو - متجر روزا">
+    <label>اسم العميل (اختياري)</label>
+    <input id="p_client" placeholder="مثال: أحمد محمد">
+    <label>وسيلة التواصل</label>
+    <select id="p_contactMethod" onchange="updatePaymentContactLabel()">
+      <option value="whatsapp">واتساب</option>
+      <option value="messenger">ماسنجر</option>
+    </select>
+    <label id="p_contactValueLabel">رقم الواتساب</label>
+    <input id="p_contactValue" placeholder="مثال: 201012345678">
+    <label>المبلغ</label>
+    <input id="p_amount" type="number" step="0.01" placeholder="مثال: 500">
+    <label>العملة</label>
+    <select id="p_currency">
+      <option value="EGP">جنيه مصري</option>
+      <option value="USD">دولار أمريكي</option>
+      <option value="EUR">يورو</option>
+      <option value="GBP">جنيه إسترليني</option>
+    </select>
+    <label>تاريخ الدفع</label>
+    <input id="p_date" type="date">
+    <p id="paymentFormError" style="color:var(--red);font-size:12.5px;margin:14px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="paymentCancelBtn">إلغاء</button>
+      <button class="btn btn-primary" id="paymentSaveBtn">حفظ</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" style="position:fixed;bottom:28px;right:28px;background:#171E2E;border:1px solid #2DD4BF;color:#2DD4BF;padding:12px 18px;border-radius:10px;font-size:13.5px;display:none;z-index:60;font-family:'IBM Plex Sans Arabic',sans-serif;max-width:280px;"></div>
 
 <script>
 let subs = [];
+let payments = [];
 let editingId = null;
+let editingPaymentId = null;
+let activeTab = 'subs';
 
 /* ====== إعدادات قاعدة البيانات (Supabase) ======
    حط هنا الـ Project URL والـ anon public key من صفحة Settings > API في مشروعك على supabase.com
@@ -262,6 +332,32 @@ function fromRemoteShape(r){
     contactMethod: r.contact_method,
     contactValue: r.contact_value,
     lastPaid: r.last_paid
+  };
+}
+
+function toRemotePaymentShape(p){
+  return {
+    id: p.id,
+    description: p.description,
+    client: p.client || null,
+    contact_method: p.contactMethod || null,
+    contact_value: p.contactValue || null,
+    amount: p.amount || 0,
+    currency: p.currency || 'EGP',
+    paid_date: p.paidDate || null
+  };
+}
+
+function fromRemotePaymentShape(r){
+  return {
+    id: r.id,
+    description: r.description,
+    client: r.client,
+    contactMethod: r.contact_method,
+    contactValue: r.contact_value,
+    amount: r.amount,
+    currency: r.currency,
+    paidDate: r.paid_date
   };
 }
 
@@ -352,6 +448,7 @@ async function loadData(){
   if(!isConfigured()){
     showToast('محتاج تحط بيانات Supabase الأول في أعلى الكود (SUPABASE_URL و SUPABASE_ANON_KEY)', true);
     subs = [];
+    payments = [];
     render();
     return;
   }
@@ -364,10 +461,55 @@ async function loadData(){
     subs = rows.map(fromRemoteShape);
   }catch(e){
     console.error('load error', e);
-    showToast('حصل خطأ في تحميل البيانات من قاعدة البيانات', true);
+    showToast('حصل خطأ في تحميل بيانات الاشتراكات', true);
     subs = [];
   }
+  await loadPayments();
+  fetchLiveRate();
   render();
+}
+
+async function loadPayments(){
+  if(!isConfigured()) return;
+  try{
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/payments?select=*`, {
+      headers: sbHeaders()
+    });
+    if(!res.ok) throw new Error('fetch failed: ' + res.status);
+    const rows = await res.json();
+    payments = rows.map(fromRemotePaymentShape);
+  }catch(e){
+    console.error('load payments error', e);
+    showToast('حصل خطأ في تحميل بيانات المدفوعات (اتأكدت من إنشاء جدول payments؟)', true);
+    payments = [];
+  }
+}
+
+async function savePayments(){
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/payments`, {
+      method: 'POST',
+      headers: sbHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify(payments.map(toRemotePaymentShape))
+    });
+  }catch(e){
+    console.error('save payments error', e);
+    showToast('حصل خطأ في حفظ المدفوعات', true);
+  }
+}
+
+async function deleteRemotePaymentRow(id){
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/payments?id=eq.${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: sbHeaders()
+    });
+  }catch(e){
+    console.error('delete payment error', e);
+    showToast('حصل خطأ في حذف الدفعة', true);
+  }
 }
 
 async function saveData(){
@@ -495,6 +637,91 @@ function cancelDelete(){
   render();
 }
 
+function updatePaymentContactLabel(){
+  const method = document.getElementById('p_contactMethod').value;
+  const label = document.getElementById('p_contactValueLabel');
+  const input = document.getElementById('p_contactValue');
+  if(method === 'whatsapp'){
+    label.textContent = 'رقم الواتساب';
+    input.placeholder = 'مثال: 201012345678';
+  } else {
+    label.textContent = 'اسم أكونت الماسنجر';
+    input.placeholder = 'مثال: ahmed.mohamed';
+  }
+}
+
+function openPaymentModal(p){
+  editingPaymentId = p ? p.id : null;
+  document.getElementById('paymentModalTitle').textContent = p ? 'تعديل دفعة' : 'إضافة دفعة جديدة';
+  document.getElementById('p_desc').value = p ? p.description : '';
+  document.getElementById('p_client').value = p ? (p.client || '') : '';
+  document.getElementById('p_contactMethod').value = p ? (p.contactMethod || 'whatsapp') : 'whatsapp';
+  document.getElementById('p_contactValue').value = p ? (p.contactValue || '') : '';
+  document.getElementById('p_amount').value = p ? p.amount : '';
+  document.getElementById('p_currency').value = p ? (p.currency || 'EGP') : 'EGP';
+  document.getElementById('p_date').value = p ? (p.paidDate || '') : new Date().toISOString().slice(0,10);
+  updatePaymentContactLabel();
+  document.getElementById('paymentFormError').style.display = 'none';
+  document.getElementById('paymentModalBg').classList.add('open');
+}
+function closePaymentModal(){
+  document.getElementById('paymentModalBg').classList.remove('open');
+}
+
+async function handlePaymentSave(){
+  const description = document.getElementById('p_desc').value.trim();
+  const client = document.getElementById('p_client').value.trim();
+  const contactMethod = document.getElementById('p_contactMethod').value;
+  const contactValue = document.getElementById('p_contactValue').value.trim();
+  const amount = parseFloat(document.getElementById('p_amount').value) || 0;
+  const currency = document.getElementById('p_currency').value;
+  const paidDate = document.getElementById('p_date').value;
+
+  const errEl = document.getElementById('paymentFormError');
+  if(!description || !amount){
+    errEl.textContent = 'من فضلك اكتب وصف الخدمة ومبلغ صحيح';
+    errEl.style.display = 'block';
+    return;
+  }
+  errEl.style.display = 'none';
+
+  if(editingPaymentId){
+    const idx = payments.findIndex(p => p.id === editingPaymentId);
+    if(idx > -1){
+      payments[idx] = {...payments[idx], description, client, contactMethod, contactValue, amount, currency, paidDate};
+    }
+  } else {
+    payments.push({
+      id: 'pay_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+      description, client, contactMethod, contactValue, amount, currency, paidDate
+    });
+  }
+  await savePayments();
+  closePaymentModal();
+  render();
+  showToast(editingPaymentId ? 'تم تحديث الدفعة' : 'تم إضافة الدفعة');
+}
+
+let pendingDeletePaymentId = null;
+
+async function deletePayment(id){
+  if(pendingDeletePaymentId !== id){
+    pendingDeletePaymentId = id;
+    render();
+    return;
+  }
+  pendingDeletePaymentId = null;
+  payments = payments.filter(p => p.id !== id);
+  await deleteRemotePaymentRow(id);
+  render();
+  showToast('تم حذف الدفعة');
+}
+
+function cancelDeletePayment(){
+  pendingDeletePaymentId = null;
+  render();
+}
+
 function buildWheel(){
   const t = todayInfo();
   const lastDay = new Date(t.year, t.month+1, 0).getDate();
@@ -546,20 +773,183 @@ function contactCellHtml(s){
   return `<a href="${c.url}" target="_blank" rel="noopener" class="svc-tag" style="text-decoration:none;color:var(--mint);border-color:var(--mint)">${c.label} ↗</a>`;
 }
 
+/* ====== سعر الصرف اللحظي ====== */
+let liveUsdRate = null;
+let rateLastUpdated = null;
+let rateFetchFailed = false;
+
+async function fetchLiveRate(){
+  try{
+    const res = await fetch('https://api.frankfurter.app/latest?from=USD&to=EGP');
+    if(!res.ok) throw new Error('rate fetch failed');
+    const data = await res.json();
+    liveUsdRate = data.rates.EGP;
+    rateLastUpdated = new Date();
+    rateFetchFailed = false;
+  }catch(e){
+    console.error('rate error', e);
+    rateFetchFailed = true;
+  }
+  render();
+}
+
+async function fetchRateFor(currency){
+  if(currency === 'EGP') return 1;
+  try{
+    const res = await fetch(`https://api.frankfurter.app/latest?from=${currency}&to=EGP`);
+    if(!res.ok) throw new Error('rate fetch failed');
+    const data = await res.json();
+    return data.rates.EGP;
+  }catch(e){
+    console.error('rate error', e);
+    return null;
+  }
+}
+
+function rateBarHtml(){
+  let valText, timeText;
+  if(rateFetchFailed && !liveUsdRate){
+    valText = 'تعذر تحميل السعر';
+    timeText = 'جرب تحدّث الصفحة';
+  } else if(liveUsdRate){
+    valText = `1$ = ${liveUsdRate.toFixed(2)} ج.م`;
+    timeText = 'آخر تحديث: ' + rateLastUpdated.toLocaleTimeString('ar-EG', {hour:'2-digit', minute:'2-digit'});
+  } else {
+    valText = 'جاري تحميل السعر...';
+    timeText = '';
+  }
+  return `<div class="rate-bar">
+    <div>
+      <div class="rate-val">${valText}</div>
+      <div class="rate-time">${timeText} &middot; سعر تقريبي من مصدر عالمي، مش سعر بنك رسمي لحظي</div>
+    </div>
+    <button class="icon-btn-sm" onclick="fetchLiveRate()">↻ تحديث</button>
+  </div>`;
+}
+
+/* ====== حاسبة التسعير ====== */
+let calcCurrency = 'EGP';
+let calcRateValue = null;
+let calcResult = null;
+let calcAmountValue = '';
+
+async function onCalcCurrencyChange(){
+  calcAmountValue = document.getElementById('calc_amount').value;
+  calcCurrency = document.getElementById('calc_currency').value;
+  calcResult = null;
+  render();
+  if(calcCurrency !== 'EGP'){
+    const r = await fetchRateFor(calcCurrency);
+    calcRateValue = r;
+    render();
+  }
+}
+
+function runCalculation(){
+  const amount = parseFloat(document.getElementById('calc_amount').value) || 0;
+  calcAmountValue = document.getElementById('calc_amount').value;
+  if(!amount){
+    showToast('اكتب مبلغ صحيح الأول', true);
+    return;
+  }
+  if(calcCurrency === 'EGP'){
+    const bankFee = amount * 0.03;
+    const profit = amount * 0.07;
+    const total = amount + bankFee + profit;
+    calcResult = {
+      type: 'egp',
+      original: amount,
+      bankFee, profit, total
+    };
+  } else {
+    const rateInput = document.getElementById('calc_rate');
+    const rate = parseFloat(rateInput.value) || 0;
+    if(!rate){
+      showToast('محتاج سعر صرف صحيح', true);
+      return;
+    }
+    calcRateValue = rate;
+    const converted = amount * rate;
+    const profit = converted * 0.10;
+    const total = converted + profit;
+    calcResult = {
+      type: 'foreign',
+      original: amount,
+      currency: calcCurrency,
+      rate, converted, profit, total
+    };
+  }
+  render();
+}
+
+function calcResultHtml(){
+  if(!calcResult) return '';
+  if(calcResult.type === 'egp'){
+    return `<div class="result-box">
+      <div class="result-line"><span>المبلغ الأصلي</span><span>${calcResult.original.toFixed(2)} ج.م</span></div>
+      <div class="result-line"><span>نسبة البنك (٣٪)</span><span>+ ${calcResult.bankFee.toFixed(2)} ج.م</span></div>
+      <div class="result-line"><span>نسبة الربح (٧٪)</span><span>+ ${calcResult.profit.toFixed(2)} ج.م</span></div>
+      <div class="result-line total"><span>الإجمالي المطلوب من العميل</span><span>${calcResult.total.toFixed(2)} ج.م</span></div>
+    </div>`;
+  }
+  return `<div class="result-box">
+    <div class="result-line"><span>المبلغ الأصلي</span><span>${calcResult.original.toFixed(2)} ${calcResult.currency}</span></div>
+    <div class="result-line"><span>سعر الصرف المستخدم</span><span>${calcResult.rate.toFixed(2)} ج.م</span></div>
+    <div class="result-line"><span>المبلغ بالجنيه</span><span>${calcResult.converted.toFixed(2)} ج.م</span></div>
+    <div class="result-line"><span>نسبة الربح (١٠٪)</span><span>+ ${calcResult.profit.toFixed(2)} ج.م</span></div>
+    <div class="result-line total"><span>الإجمالي المطلوب من العميل</span><span>${calcResult.total.toFixed(2)} ج.م</span></div>
+  </div>`;
+}
+
+function switchTab(tab){
+  activeTab = tab;
+  pendingDeleteId = null;
+  pendingDeletePaymentId = null;
+  render();
+}
+
+function tabBarHtml(){
+  return `<div class="tabs">
+    <button class="tab-btn ${activeTab==='subs'?'active':''}" onclick="switchTab('subs')">الاشتراكات</button>
+    <button class="tab-btn ${activeTab==='payments'?'active':''}" onclick="switchTab('payments')">مدفوعات</button>
+    <button class="tab-btn ${activeTab==='calc'?'active':''}" onclick="switchTab('calc')">حاسبة التسعير</button>
+  </div>`;
+}
+
 function render(){
   const app = document.getElementById('app');
-  const t = todayInfo();
+  const fab = document.getElementById('addBtn');
 
+  let html = `<h1>لوحة إدارة الاشتراكات</h1>`;
+  html += rateBarHtml();
+  html += tabBarHtml();
+
+  if(activeTab === 'subs'){
+    fab.style.display = 'flex';
+    fab.title = 'إضافة اشتراك';
+    fab.onclick = () => openModal(null);
+    html += renderSubsTab();
+  } else if(activeTab === 'payments'){
+    fab.style.display = 'flex';
+    fab.title = 'إضافة دفعة';
+    fab.onclick = () => openPaymentModal(null);
+    html += renderPaymentsTab();
+  } else {
+    fab.style.display = 'none';
+    html += renderCalcTab();
+  }
+
+  app.innerHTML = html;
+}
+
+function renderSubsTab(){
   const withDiff = subs.map(s => ({...s, diff: daysUntilRenewal(s.day)}));
   const dueToday = withDiff.filter(s => s.diff === 0);
   const dueSoon = withDiff.filter(s => s.diff > 0 && s.diff <= 3).sort((a,b)=>a.diff-b.diff);
   const sortedAll = [...withDiff].sort((a,b)=>a.diff-b.diff);
-
   const totalMonthly = subs.reduce((sum,s)=>sum+(s.amount||0),0);
 
-  let html = `
-    <h1>متابعة اشتراكات المتاجر</h1>
-    <p class="sub">${subs.length} اشتراك متابَع &middot; إجمالي شهري تقريبي $${totalMonthly.toFixed(2)}</p>
+  let html = `<p class="sub">${subs.length} اشتراك متابَع &middot; إجمالي شهري تقريبي $${totalMonthly.toFixed(2)}</p>
 
     <div style="display:flex;gap:10px;margin-bottom:20px;">
       <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="exportData()">⬇ تصدير نسخة احتياطية</button>
@@ -581,9 +971,7 @@ function render(){
   if(dueToday.length === 0){
     html += `<div class="empty">لا يوجد تجديدات مستحقة النهاردة.</div>`;
   } else {
-    dueToday.forEach(s => {
-      html += cardHtml(s, 'today');
-    });
+    dueToday.forEach(s => { html += cardHtml(s, 'today'); });
   }
   html += `</div>`;
 
@@ -592,9 +980,7 @@ function render(){
   if(dueSoon.length === 0){
     html += `<div class="empty">لا يوجد تجديدات قريبة.</div>`;
   } else {
-    dueSoon.forEach(s => {
-      html += cardHtml(s, 'soon');
-    });
+    dueSoon.forEach(s => { html += cardHtml(s, 'soon'); });
   }
   html += `</div>`;
 
@@ -629,8 +1015,80 @@ function render(){
     });
     html += `</tbody></table>`;
   }
+  return html;
+}
 
-  app.innerHTML = html;
+function paymentCurrencyLabel(c){
+  return {EGP:'ج.م', USD:'$', EUR:'€', GBP:'£'}[c] || c;
+}
+
+function renderPaymentsTab(){
+  const totalEgp = payments.filter(p=>p.currency==='EGP').reduce((s,p)=>s+(p.amount||0),0);
+  const sorted = [...payments].sort((a,b)=> (b.paidDate||'').localeCompare(a.paidDate||''));
+
+  let html = `<p class="sub">${payments.length} دفعة مسجلة &middot; إجمالي بالجنيه ${totalEgp.toFixed(2)} ج.م (المبالغ غير الجنيه مش محسوبة هنا)</p>`;
+
+  html += `<div class="section-title">كل المدفوعات <span class="count-pill">${payments.length}</span></div>`;
+  if(payments.length === 0){
+    html += `<div class="empty">لسه معملتش دفعات. دوس على زرار (+) تحت عشان تضيف أول دفعة.</div>`;
+  } else {
+    html += `<table><thead><tr>
+      <th>الوصف</th><th>العميل</th><th>تواصل</th><th>المبلغ</th><th>التاريخ</th><th></th>
+    </tr></thead><tbody>`;
+    sorted.forEach(p => {
+      html += `<tr>
+        <td>${escapeHtml(p.description)}</td>
+        <td>${escapeHtml(p.client || '—')}</td>
+        <td>${contactCellHtml(p)}</td>
+        <td>${(p.amount||0).toFixed(2)} ${paymentCurrencyLabel(p.currency)}</td>
+        <td>${p.paidDate || '—'}</td>
+        <td>
+          <div class="row-actions">
+            ${pendingDeletePaymentId === p.id ? `
+              <button class="icon-btn" style="background:var(--red-dim);color:var(--red);border-color:var(--red);font-size:11px;width:auto;padding:0 8px;" onclick="deletePayment('${p.id}')" title="اضغط للتأكيد">تأكيد الحذف</button>
+              <button class="icon-btn" onclick="cancelDeletePayment()" title="إلغاء">↩</button>
+            ` : `
+              <button class="icon-btn" onclick="openPaymentModal(payments.find(x=>x.id==='${p.id}'))" title="تعديل">✎</button>
+              <button class="icon-btn" onclick="deletePayment('${p.id}')" title="حذف">✕</button>
+            `}
+          </div>
+        </td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+  return html;
+}
+
+function renderCalcTab(){
+  const showRateField = calcCurrency !== 'EGP';
+  return `<p class="sub">احسب تكلفة الخدمة تلقائيًا حسب العملة</p>
+    <div class="calc-card">
+      <div class="calc-row">
+        <div>
+          <label style="margin-top:0;">المبلغ</label>
+          <input id="calc_amount" type="number" step="0.01" placeholder="مثال: 100" value="${calcAmountValue}">
+        </div>
+        <div>
+          <label style="margin-top:0;">العملة</label>
+          <select id="calc_currency" onchange="onCalcCurrencyChange()">
+            <option value="EGP" ${calcCurrency==='EGP'?'selected':''}>جنيه مصري</option>
+            <option value="USD" ${calcCurrency==='USD'?'selected':''}>دولار أمريكي</option>
+            <option value="EUR" ${calcCurrency==='EUR'?'selected':''}>يورو</option>
+            <option value="GBP" ${calcCurrency==='GBP'?'selected':''}>جنيه إسترليني</option>
+          </select>
+        </div>
+      </div>
+      ${showRateField ? `
+      <label style="margin-top:0;">سعر الصرف (جنيه لكل وحدة) — اتعبى تلقائي، وتقدر تعدله يدوي</label>
+      <input id="calc_rate" type="number" step="0.0001" value="${calcRateValue !== null ? calcRateValue.toFixed(4) : ''}" placeholder="${calcRateValue===null ? 'جاري التحميل...' : ''}">
+      ` : ''}
+      <button class="btn btn-primary" style="width:100%;margin-top:16px;" onclick="runCalculation()">احسب التكلفة</button>
+      ${calcResultHtml()}
+      <p style="color:var(--muted);font-size:12px;margin-top:16px;line-height:1.7;">
+        القاعدة: لو المبلغ بالجنيه بيتضاف ٣٪ نسبة بنك + ٧٪ ربح. لو بعملة أجنبية، بيتحول للجنيه بسعر الصرف ثم يتضاف ١٠٪ ربح.
+      </p>
+    </div>`;
 }
 
 function cardHtml(s, kind){
@@ -656,11 +1114,15 @@ function escapeHtml(str){
   return div.innerHTML;
 }
 
-document.getElementById('addBtn').addEventListener('click', () => openModal(null));
 document.getElementById('cancelBtn').addEventListener('click', closeModal);
 document.getElementById('saveBtn').addEventListener('click', handleSave);
 document.getElementById('modalBg').addEventListener('click', (e) => {
   if(e.target.id === 'modalBg') closeModal();
+});
+document.getElementById('paymentCancelBtn').addEventListener('click', closePaymentModal);
+document.getElementById('paymentSaveBtn').addEventListener('click', handlePaymentSave);
+document.getElementById('paymentModalBg').addEventListener('click', (e) => {
+  if(e.target.id === 'paymentModalBg') closePaymentModal();
 });
 
 /* ====== شاشة القفل ====== */
