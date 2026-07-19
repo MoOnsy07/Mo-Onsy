@@ -86,6 +86,7 @@
   }
   .card.today{border-color:var(--mint);box-shadow:0 0 0 1px var(--mint) inset;}
   .card.soon{border-color:var(--amber);}
+  .card.overdue{border-color:var(--red);box-shadow:0 0 0 1px var(--red) inset;}
   .card .store{font-weight:700;font-size:15px;margin:0 0 2px;font-family:'Cairo',sans-serif;}
   .card .client{color:var(--muted);font-size:12.5px;margin:0 0 10px;}
   .card .meta{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--muted);}
@@ -96,6 +97,7 @@
   }
   .badge.today{background:var(--mint-dim);color:var(--mint);}
   .badge.soon{background:var(--amber-dim);color:var(--amber);}
+  .badge.overdue{background:var(--red-dim);color:var(--red);}
   .pay-btn{
     margin-top:12px;width:100%;
     background:var(--mint);color:#08211D;border:none;
@@ -317,7 +319,8 @@ function toRemoteShape(s){
     amount: s.amount || 0,
     contact_method: s.contactMethod || null,
     contact_value: s.contactValue || null,
-    last_paid: s.lastPaid || null
+    last_paid: s.lastPaid || null,
+    cancelled: !!s.cancelled
   };
 }
 
@@ -331,7 +334,8 @@ function fromRemoteShape(r){
     amount: r.amount,
     contactMethod: r.contact_method,
     contactValue: r.contact_value,
-    lastPaid: r.last_paid
+    lastPaid: r.last_paid,
+    cancelled: !!r.cancelled
   };
 }
 
@@ -428,20 +432,34 @@ function todayInfo(){
   return { day: now.getDate(), month: now.getMonth(), year: now.getFullYear() };
 }
 
-function daysUntilRenewal(renewalDay){
+function toISODateLocal(d){
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/* بيرجع رقم: سالب = متأخر بكذا يوم، صفر = مستحق النهاردة، موجب = باقي كذا يوم.
+   بياخد بالاعتبار هل اتدفع للدورة الحالية ولا لأ. */
+function computeDiff(sub){
   const now = new Date();
-  const curDay = now.getDate();
-  const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
-  const effectiveDay = Math.min(renewalDay, lastDayOfMonth);
-  let diff = effectiveDay - curDay;
-  if(diff < 0){
-    // next month
+  const todayLocal = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayStr = toISODateLocal(todayLocal);
+
+  const lastDayThisMonth = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+  const thisRenewalDay = Math.min(sub.day, lastDayThisMonth);
+  const thisRenewalDate = new Date(now.getFullYear(), now.getMonth(), thisRenewalDay);
+  const thisRenewalStr = toISODateLocal(thisRenewalDate);
+
+  const paidThisCycle = sub.lastPaid && sub.lastPaid >= thisRenewalStr;
+
+  if(paidThisCycle){
     const lastDayNext = new Date(now.getFullYear(), now.getMonth()+2, 0).getDate();
-    const effNext = Math.min(renewalDay, lastDayNext);
-    const nextMonthFirst = new Date(now.getFullYear(), now.getMonth()+1, effNext);
-    diff = Math.round((nextMonthFirst - new Date(now.getFullYear(),now.getMonth(),curDay)) / 86400000);
+    const nextRenewalDay = Math.min(sub.day, lastDayNext);
+    const nextRenewalDate = new Date(now.getFullYear(), now.getMonth()+1, nextRenewalDay);
+    return Math.round((nextRenewalDate - todayLocal) / 86400000);
   }
-  return diff;
+  return Math.round((thisRenewalDate - todayLocal) / 86400000);
 }
 
 async function loadData(){
@@ -722,13 +740,14 @@ function cancelDeletePayment(){
   render();
 }
 
-function buildWheel(){
+function buildWheel(list){
+  const subsList = list || subs;
   const t = todayInfo();
   const lastDay = new Date(t.year, t.month+1, 0).getDate();
   const cx = 90, cy = 90, r = 70;
   let dots = '';
   const dayCounts = {};
-  subs.forEach(s => {
+  subsList.forEach(s => {
     const d = Math.min(s.day, lastDay);
     dayCounts[d] = (dayCounts[d]||0) + 1;
   });
@@ -780,10 +799,10 @@ let rateFetchFailed = false;
 
 async function fetchLiveRate(){
   try{
-    const res = await fetch('https://api.frankfurter.app/latest?from=USD&to=EGP');
+    const res = await fetch('https://api.frankfurter.dev/v2/rate/USD/EGP');
     if(!res.ok) throw new Error('rate fetch failed');
     const data = await res.json();
-    liveUsdRate = data.rates.EGP;
+    liveUsdRate = data.rate;
     rateLastUpdated = new Date();
     rateFetchFailed = false;
   }catch(e){
@@ -796,10 +815,10 @@ async function fetchLiveRate(){
 async function fetchRateFor(currency){
   if(currency === 'EGP') return 1;
   try{
-    const res = await fetch(`https://api.frankfurter.app/latest?from=${currency}&to=EGP`);
+    const res = await fetch(`https://api.frankfurter.dev/v2/rate/${currency}/EGP`);
     if(!res.ok) throw new Error('rate fetch failed');
     const data = await res.json();
-    return data.rates.EGP;
+    return data.rate;
   }catch(e){
     console.error('rate error', e);
     return null;
@@ -943,13 +962,17 @@ function render(){
 }
 
 function renderSubsTab(){
-  const withDiff = subs.map(s => ({...s, diff: daysUntilRenewal(s.day)}));
+  const activeSubs = subs.filter(s => !s.cancelled);
+  const cancelledSubs = subs.filter(s => s.cancelled);
+
+  const withDiff = activeSubs.map(s => ({...s, diff: computeDiff(s)}));
+  const overdue = withDiff.filter(s => s.diff < 0).sort((a,b)=>a.diff-b.diff);
   const dueToday = withDiff.filter(s => s.diff === 0);
   const dueSoon = withDiff.filter(s => s.diff > 0 && s.diff <= 3).sort((a,b)=>a.diff-b.diff);
   const sortedAll = [...withDiff].sort((a,b)=>a.diff-b.diff);
-  const totalMonthly = subs.reduce((sum,s)=>sum+(s.amount||0),0);
+  const totalMonthly = activeSubs.reduce((sum,s)=>sum+(s.amount||0),0);
 
-  let html = `<p class="sub">${subs.length} اشتراك متابَع &middot; إجمالي شهري تقريبي $${totalMonthly.toFixed(2)}</p>
+  let html = `<p class="sub">${activeSubs.length} اشتراك نشط &middot; إجمالي شهري تقريبي $${totalMonthly.toFixed(2)}${cancelledSubs.length ? ' &middot; ' + cancelledSubs.length + ' ملغي' : ''}</p>
 
     <div style="display:flex;gap:10px;margin-bottom:20px;">
       <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="exportData()">⬇ تصدير نسخة احتياطية</button>
@@ -958,16 +981,22 @@ function renderSubsTab(){
     </div>
 
     <div class="wheel-card">
-      ${buildWheel()}
+      ${buildWheel(activeSubs)}
       <div class="wheel-info">
         <p class="big">${dueToday.length > 0 ? dueToday.length + ' تجديد النهاردة' : 'مفيش تجديدات النهاردة'}</p>
         <p class="desc">النقط الفاتحة (البرتقالي) بتمثل أيام فيها تجديدات، وكل ما كانت أكبر يبقى فيها اشتراكات أكتر. النقطة الخضرا هي يوم النهاردة.</p>
       </div>
-    </div>
+    </div>`;
 
-    <div class="section-title">تجديدات النهاردة <span class="count-pill">${dueToday.length}</span></div>
+  if(overdue.length > 0){
+    html += `<div class="section-title" style="color:var(--red);">⚠ متأخرة عن الدفع <span class="count-pill" style="background:var(--red-dim);color:var(--red);">${overdue.length}</span></div>
+      <div class="cards">`;
+    overdue.forEach(s => { html += cardHtml(s, 'overdue'); });
+    html += `</div>`;
+  }
+
+  html += `<div class="section-title">تجديدات النهاردة <span class="count-pill">${dueToday.length}</span></div>
     <div class="cards">`;
-
   if(dueToday.length === 0){
     html += `<div class="empty">لا يوجد تجديدات مستحقة النهاردة.</div>`;
   } else {
@@ -984,14 +1013,18 @@ function renderSubsTab(){
   }
   html += `</div>`;
 
-  html += `<div class="section-title">كل الاشتراكات <span class="count-pill">${subs.length}</span></div>`;
-  if(subs.length === 0){
+  html += `<div class="section-title">كل الاشتراكات النشطة <span class="count-pill">${activeSubs.length}</span></div>`;
+  if(activeSubs.length === 0){
     html += `<div class="empty">لسه معملتش اشتراكات. دوس على زرار (+) تحت عشان تضيف أول اشتراك.</div>`;
   } else {
     html += `<table><thead><tr>
-      <th>اسم الخدمة</th><th>العميل</th><th>النوع</th><th>تواصل</th><th>يوم التجديد</th><th>المبلغ</th><th>باقي كام يوم</th><th></th>
+      <th>اسم الخدمة</th><th>العميل</th><th>النوع</th><th>تواصل</th><th>يوم التجديد</th><th>المبلغ</th><th>الحالة</th><th>آخر دفعة</th><th></th>
     </tr></thead><tbody>`;
     sortedAll.forEach(s => {
+      let statusText, statusColor;
+      if(s.diff < 0){ statusText = `متأخر ${Math.abs(s.diff)} يوم`; statusColor = 'var(--red)'; }
+      else if(s.diff === 0){ statusText = 'النهاردة'; statusColor = 'var(--mint)'; }
+      else { statusText = s.diff + ' يوم'; statusColor = 'var(--text)'; }
       html += `<tr>
         <td>${escapeHtml(s.store)}</td>
         <td>${escapeHtml(s.client || '—')}</td>
@@ -999,7 +1032,8 @@ function renderSubsTab(){
         <td>${contactCellHtml(s)}</td>
         <td>${s.day}</td>
         <td>$${(s.amount||0).toFixed(2)}</td>
-        <td>${s.diff === 0 ? 'النهاردة' : s.diff + ' يوم'}</td>
+        <td style="color:${statusColor};font-weight:600;">${statusText}</td>
+        <td>${s.lastPaid ? s.lastPaid : '—'}</td>
         <td>
           <div class="row-actions">
             ${pendingDeleteId === s.id ? `
@@ -1007,6 +1041,7 @@ function renderSubsTab(){
               <button class="icon-btn" onclick="cancelDelete()" title="إلغاء">↩</button>
             ` : `
               <button class="icon-btn" onclick="openModal(subs.find(x=>x.id==='${s.id}'))" title="تعديل">✎</button>
+              <button class="icon-btn" onclick="cancelSub('${s.id}')" title="إلغاء الاشتراك نهائي">🚫</button>
               <button class="icon-btn" onclick="deleteSub('${s.id}')" title="حذف">✕</button>
             `}
           </div>
@@ -1015,7 +1050,40 @@ function renderSubsTab(){
     });
     html += `</tbody></table>`;
   }
+
+  if(cancelledSubs.length > 0){
+    html += `<div class="section-title" style="color:var(--muted);">اشتراكات ملغاة <span class="count-pill" style="background:var(--surface-2);color:var(--muted);">${cancelledSubs.length}</span></div>
+      <table><thead><tr>
+      <th>اسم الخدمة</th><th>العميل</th><th>النوع</th><th>المبلغ</th><th></th>
+    </tr></thead><tbody>`;
+    cancelledSubs.forEach(s => {
+      html += `<tr style="opacity:0.55;">
+        <td>${escapeHtml(s.store)}</td>
+        <td>${escapeHtml(s.client || '—')}</td>
+        <td>${fmtService(s.service)}</td>
+        <td>$${(s.amount||0).toFixed(2)}</td>
+        <td>
+          <div class="row-actions">
+            <button class="icon-btn" onclick="cancelSub('${s.id}')" title="إعادة التفعيل">↺</button>
+            <button class="icon-btn" onclick="deleteSub('${s.id}')" title="حذف نهائي">✕</button>
+          </div>
+        </td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+
   return html;
+}
+
+async function cancelSub(id){
+  const idx = subs.findIndex(s => s.id === id);
+  if(idx > -1){
+    subs[idx].cancelled = !subs[idx].cancelled;
+    await saveData();
+    render();
+    showToast(subs[idx].cancelled ? 'تم إلغاء الاشتراك' : 'تم إعادة تفعيل الاشتراك');
+  }
 }
 
 function paymentCurrencyLabel(c){
@@ -1091,10 +1159,20 @@ function renderCalcTab(){
     </div>`;
 }
 
+function isPaidToday(s){
+  if(!s.lastPaid) return false;
+  return s.lastPaid === new Date().toISOString().slice(0,10);
+}
+
 function cardHtml(s, kind){
   const c = contactLink(s);
-  return `<div class="card ${kind}">
-    <span class="badge ${kind}">${kind === 'today' ? 'النهاردة' : 'خلال ' + s.diff + ' يوم'}</span>
+  const paidToday = isPaidToday(s);
+  let badgeText;
+  if(s.diff < 0) badgeText = `متأخر ${Math.abs(s.diff)} يوم`;
+  else if(kind === 'today') badgeText = 'النهاردة';
+  else badgeText = 'خلال ' + s.diff + ' يوم';
+  return `<div class="card ${kind}" style="${paidToday ? 'opacity:0.6;' : ''}">
+    <span class="badge ${kind}">${badgeText}</span>
     <p class="store">${escapeHtml(s.store)}</p>
     <p class="client">${escapeHtml(s.client || '')} ${s.client ? '&middot; ' : ''}${s.service}</p>
     <div class="meta">
@@ -1103,7 +1181,10 @@ function cardHtml(s, kind){
     </div>
     <div style="display:flex;gap:8px;margin-top:12px;">
       ${c ? `<a href="${c.url}" target="_blank" rel="noopener" class="btn btn-ghost" style="text-decoration:none;text-align:center;display:flex;align-items:center;justify-content:center;">راسله</a>` : ''}
-      <button class="pay-btn" style="margin-top:0;flex:1;" onclick="markPaid('${s.id}')">تم الدفع ✓</button>
+      ${paidToday
+        ? `<button class="pay-btn" style="margin-top:0;flex:1;background:var(--surface-2);color:var(--mint);cursor:default;" disabled>تم الدفع اليوم ✅</button>`
+        : `<button class="pay-btn" style="margin-top:0;flex:1;" onclick="markPaid('${s.id}')">تم الدفع ✓</button>`
+      }
     </div>
   </div>`;
 }
