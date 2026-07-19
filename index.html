@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>متابعة الاشتراكات</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0F1420;
+    --surface:#171E2E;
+    --surface-2:#1E2740;
+    --border:#2A3450;
+    --mint:#2DD4BF;
+    --mint-dim: rgba(45,212,191,0.15);
+    --amber:#F5A524;
+    --amber-dim: rgba(245,165,36,0.15);
+    --red:#F0576B;
+    --red-dim: rgba(240,87,107,0.15);
+    --text:#E8EAF0;
+    --muted:#8A93A6;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:'IBM Plex Sans Arabic','Cairo',sans-serif;
+    min-height:100vh;
+    padding:28px 18px 60px;
+  }
+  .wrap{max-width:960px;margin:0 auto;}
+  h1{
+    font-family:'Cairo',sans-serif;
+    font-weight:800;
+    font-size:28px;
+    margin:0 0 4px;
+    letter-spacing:-0.3px;
+  }
+  .sub{color:var(--muted);font-size:14px;margin:0 0 26px;}
+
+  /* Radial wheel */
+  .wheel-card{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:18px;
+    padding:22px;
+    display:flex;
+    align-items:center;
+    gap:24px;
+    margin-bottom:24px;
+    flex-wrap:wrap;
+  }
+  .wheel-card svg{flex-shrink:0;}
+  .wheel-info{flex:1;min-width:200px;}
+  .wheel-info .big{font-family:'Cairo',sans-serif;font-weight:800;font-size:22px;margin:0 0 6px;}
+  .wheel-info .desc{color:var(--muted);font-size:13.5px;line-height:1.7;}
+
+  .section-title{
+    font-family:'Cairo',sans-serif;
+    font-weight:700;
+    font-size:16px;
+    margin:28px 0 12px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .count-pill{
+    background:var(--mint-dim);
+    color:var(--mint);
+    font-size:12px;
+    font-weight:700;
+    padding:2px 9px;
+    border-radius:99px;
+  }
+
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;}
+  .card{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:16px;
+    position:relative;
+    overflow:hidden;
+  }
+  .card.today{border-color:var(--mint);box-shadow:0 0 0 1px var(--mint) inset;}
+  .card.soon{border-color:var(--amber);}
+  .card .store{font-weight:700;font-size:15px;margin:0 0 2px;font-family:'Cairo',sans-serif;}
+  .card .client{color:var(--muted);font-size:12.5px;margin:0 0 10px;}
+  .card .meta{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--muted);}
+  .card .amount{color:var(--text);font-weight:600;}
+  .badge{
+    position:absolute;top:12px;left:12px;
+    font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:99px;
+  }
+  .badge.today{background:var(--mint-dim);color:var(--mint);}
+  .badge.soon{background:var(--amber-dim);color:var(--amber);}
+  .pay-btn{
+    margin-top:12px;width:100%;
+    background:var(--mint);color:#08211D;border:none;
+    font-weight:700;font-size:13px;padding:8px;border-radius:9px;cursor:pointer;
+    font-family:inherit;
+  }
+  .pay-btn:hover{opacity:0.9;}
+  .empty{color:var(--muted);font-size:13.5px;padding:14px 4px;}
+
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:6px;}
+  thead th{
+    text-align:right;color:var(--muted);font-weight:600;font-size:12px;
+    padding:8px 10px;border-bottom:1px solid var(--border);
+  }
+  tbody td{padding:10px;border-bottom:1px solid var(--border);}
+  tbody tr:hover{background:var(--surface-2);}
+  .svc-tag{
+    font-size:11px;padding:2px 8px;border-radius:99px;background:var(--surface-2);color:var(--muted);
+    border:1px solid var(--border);
+  }
+  .row-actions{display:flex;gap:6px;}
+  .icon-btn{
+    background:transparent;border:1px solid var(--border);color:var(--muted);
+    width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:13px;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .icon-btn:hover{color:var(--text);border-color:var(--muted);}
+
+  .fab{
+    position:fixed;bottom:28px;left:28px;
+    background:var(--mint);color:#08211D;border:none;
+    width:56px;height:56px;border-radius:50%;font-size:26px;font-weight:700;
+    cursor:pointer;box-shadow:0 6px 20px rgba(45,212,191,0.35);
+  }
+
+  .modal-bg{
+    position:fixed;inset:0;background:rgba(5,8,15,0.7);
+    display:none;align-items:center;justify-content:center;padding:16px;z-index:50;
+  }
+  .modal-bg.open{display:flex;}
+  .modal{
+    background:var(--surface);border:1px solid var(--border);border-radius:16px;
+    padding:22px;width:100%;max-width:420px;
+  }
+  .modal h2{font-family:'Cairo',sans-serif;font-size:18px;margin:0 0 16px;}
+  label{display:block;font-size:12.5px;color:var(--muted);margin:12px 0 5px;}
+  input,select{
+    width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+    padding:10px 11px;border-radius:9px;font-size:14px;font-family:inherit;
+  }
+  input:focus,select:focus{outline:none;border-color:var(--mint);}
+  .modal-actions{display:flex;gap:10px;margin-top:20px;}
+  .btn{
+    flex:1;padding:10px;border-radius:9px;border:none;font-weight:700;font-size:14px;
+    cursor:pointer;font-family:inherit;
+  }
+  .btn-primary{background:var(--mint);color:#08211D;}
+  .btn-ghost{background:transparent;border:1px solid var(--border);color:var(--muted);}
+  .btn-danger{background:var(--red-dim);color:var(--red);}
+  .loading{color:var(--muted);text-align:center;padding:40px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <div class="loading">جاري تحميل البيانات...</div>
+</div>
+
+<button class="fab" id="addBtn" title="إضافة اشتراك">+</button>
+
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <h2 id="modalTitle">إضافة اشتراك جديد</h2>
+    <label>اسم الخدمة</label>
+    <input id="f_store" placeholder="مثال: اشتراك Shopify - متجر روزا">
+    <label>اسم العميل (اختياري)</label>
+    <input id="f_client" placeholder="مثال: أحمد محمد">
+    <label>وسيلة التواصل</label>
+    <select id="f_contactMethod" onchange="updateContactLabel()">
+      <option value="whatsapp">واتساب</option>
+      <option value="messenger">ماسنجر</option>
+    </select>
+    <label id="f_contactValueLabel">رقم الواتساب</label>
+    <input id="f_contactValue" placeholder="مثال: 201012345678">
+    <label>نوع الاشتراك</label>
+    <select id="f_service">
+      <option value="Shopify">Shopify</option>
+      <option value="Claude">Claude</option>
+      <option value="Gemini">Gemini</option>
+      <option value="ChatGPT">ChatGPT</option>
+      <option value="أخرى">أخرى</option>
+    </select>
+    <label>يوم التجديد الشهري (١-٣١)</label>
+    <input id="f_day" type="number" min="1" max="31" placeholder="مثال: 15">
+    <label>المبلغ (بالدولار)</label>
+    <input id="f_amount" type="number" step="0.01" placeholder="مثال: 39">
+    <p id="formError" style="color:var(--red);font-size:12.5px;margin:14px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="cancelBtn">إلغاء</button>
+      <button class="btn btn-primary" id="saveBtn">حفظ</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" style="position:fixed;bottom:28px;right:28px;background:#171E2E;border:1px solid #2DD4BF;color:#2DD4BF;padding:12px 18px;border-radius:10px;font-size:13.5px;display:none;z-index:60;font-family:'IBM Plex Sans Arabic',sans-serif;max-width:280px;"></div>
+
+<script>
+let subs = [];
+let editingId = null;
+
+/* ====== إعدادات قاعدة البيانات (Supabase) ======
+   حط هنا الـ Project URL والـ anon public key من صفحة Settings > API في مشروعك على supabase.com
+*/
+const SUPABASE_URL = 'https://fimudnycdfpvkpjqibtu.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_Zq6MwSx-bfuMkUUlw_8J9w_rD4WAioB';
+
+function sbHeaders(extra){
+  return {
+    'apikey': SUPABASE_ANON_KEY,
+    'Content-Type': 'application/json',
+    ...(extra || {})
+  };
+}
+
+function isConfigured(){
+  return !SUPABASE_URL.includes('xxxxxxxxxxxx') && SUPABASE_ANON_KEY.length > 0;
+}
+
+function toRemoteShape(s){
+  return {
+    id: s.id,
+    store: s.store,
+    client: s.client || null,
+    service: s.service,
+    day: s.day,
+    amount: s.amount || 0,
+    contact_method: s.contactMethod || null,
+    contact_value: s.contactValue || null,
+    last_paid: s.lastPaid || null
+  };
+}
+
+function fromRemoteShape(r){
+  return {
+    id: r.id,
+    store: r.store,
+    client: r.client,
+    service: r.service,
+    day: r.day,
+    amount: r.amount,
+    contactMethod: r.contact_method,
+    contactValue: r.contact_value,
+    lastPaid: r.last_paid
+  };
+}
+
+
+function showToast(msg, isError){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.borderColor = isError ? '#F0576B' : '#2DD4BF';
+  t.style.color = isError ? '#F0576B' : '#2DD4BF';
+  t.style.display = 'block';
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(() => { t.style.display = 'none'; }, 3500);
+}
+
+function exportData(){
+  if(subs.length === 0){
+    showToast('مفيش بيانات لسه عشان تتصدر', true);
+    return;
+  }
+  const blob = new Blob([JSON.stringify(subs, null, 2)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const dateStr = new Date().toISOString().slice(0,10);
+  a.href = url;
+  a.download = `اشتراكات-نسخة-احتياطية-${dateStr}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('تم تنزيل النسخة الاحتياطية بنجاح');
+}
+
+async function importData(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  try{
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    if(!Array.isArray(parsed)) throw new Error('invalid format');
+
+    let added = 0, updated = 0;
+    parsed.forEach(item => {
+      if(!item.store || !item.day) return;
+      const idx = item.id ? subs.findIndex(s => s.id === item.id) : -1;
+      if(idx > -1){
+        subs[idx] = {...subs[idx], ...item};
+        updated++;
+      } else {
+        subs.push({
+          ...item,
+          id: item.id || ('sub_' + Date.now() + '_' + Math.random().toString(36).slice(2,7))
+        });
+        added++;
+      }
+    });
+    await saveData();
+    render();
+    showToast(`تم الاستيراد: ${added} جديد، ${updated} تحديث`);
+  }catch(e){
+    showToast('الملف مش صالح، تأكد إنه نفس ملف النسخة الاحتياطية', true);
+  }
+  event.target.value = '';
+}
+
+
+function todayInfo(){
+  const now = new Date();
+  return { day: now.getDate(), month: now.getMonth(), year: now.getFullYear() };
+}
+
+function daysUntilRenewal(renewalDay){
+  const now = new Date();
+  const curDay = now.getDate();
+  const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+  const effectiveDay = Math.min(renewalDay, lastDayOfMonth);
+  let diff = effectiveDay - curDay;
+  if(diff < 0){
+    // next month
+    const lastDayNext = new Date(now.getFullYear(), now.getMonth()+2, 0).getDate();
+    const effNext = Math.min(renewalDay, lastDayNext);
+    const nextMonthFirst = new Date(now.getFullYear(), now.getMonth()+1, effNext);
+    diff = Math.round((nextMonthFirst - new Date(now.getFullYear(),now.getMonth(),curDay)) / 86400000);
+  }
+  return diff;
+}
+
+async function loadData(){
+  if(!isConfigured()){
+    showToast('محتاج تحط بيانات Supabase الأول في أعلى الكود (SUPABASE_URL و SUPABASE_ANON_KEY)', true);
+    subs = [];
+    render();
+    return;
+  }
+  try{
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/subscriptions?select=*`, {
+      headers: sbHeaders()
+    });
+    if(!res.ok) throw new Error('fetch failed: ' + res.status);
+    const rows = await res.json();
+    subs = rows.map(fromRemoteShape);
+  }catch(e){
+    console.error('load error', e);
+    showToast('حصل خطأ في تحميل البيانات من قاعدة البيانات', true);
+    subs = [];
+  }
+  render();
+}
+
+async function saveData(){
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/subscriptions`, {
+      method: 'POST',
+      headers: sbHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify(subs.map(toRemoteShape))
+    });
+  }catch(e){
+    console.error('save error', e);
+    showToast('حصل خطأ في حفظ البيانات على قاعدة البيانات', true);
+  }
+}
+
+async function deleteRemoteRow(id){
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/subscriptions?id=eq.${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: sbHeaders()
+    });
+  }catch(e){
+    console.error('delete error', e);
+    showToast('حصل خطأ في حذف السجل من قاعدة البيانات', true);
+  }
+}
+
+function updateContactLabel(){
+  const method = document.getElementById('f_contactMethod').value;
+  const label = document.getElementById('f_contactValueLabel');
+  const input = document.getElementById('f_contactValue');
+  if(method === 'whatsapp'){
+    label.textContent = 'رقم الواتساب';
+    input.placeholder = 'مثال: 201012345678';
+  } else {
+    label.textContent = 'اسم أكونت الماسنجر';
+    input.placeholder = 'مثال: ahmed.mohamed';
+  }
+}
+
+function openModal(sub){
+  editingId = sub ? sub.id : null;
+  document.getElementById('modalTitle').textContent = sub ? 'تعديل اشتراك' : 'إضافة اشتراك جديد';
+  document.getElementById('f_store').value = sub ? sub.store : '';
+  document.getElementById('f_client').value = sub ? sub.client : '';
+  document.getElementById('f_service').value = sub ? sub.service : 'Shopify';
+  document.getElementById('f_day').value = sub ? sub.day : '';
+  document.getElementById('f_amount').value = sub ? sub.amount : '';
+  document.getElementById('f_contactMethod').value = sub ? (sub.contactMethod || 'whatsapp') : 'whatsapp';
+  document.getElementById('f_contactValue').value = sub ? (sub.contactValue || '') : '';
+  updateContactLabel();
+  document.getElementById('formError').style.display = 'none';
+  document.getElementById('modalBg').classList.add('open');
+}
+function closeModal(){
+  document.getElementById('modalBg').classList.remove('open');
+}
+
+async function handleSave(){
+  const store = document.getElementById('f_store').value.trim();
+  const client = document.getElementById('f_client').value.trim();
+  const service = document.getElementById('f_service').value;
+  const day = parseInt(document.getElementById('f_day').value);
+  const amount = parseFloat(document.getElementById('f_amount').value) || 0;
+  const contactMethod = document.getElementById('f_contactMethod').value;
+  const contactValue = document.getElementById('f_contactValue').value.trim();
+
+  const errEl = document.getElementById('formError');
+  if(!store || !day || day < 1 || day > 31){
+    errEl.textContent = 'من فضلك اكتب اسم الخدمة ويوم تجديد صحيح (١-٣١)';
+    errEl.style.display = 'block';
+    return;
+  }
+  errEl.style.display = 'none';
+
+  if(editingId){
+    const idx = subs.findIndex(s => s.id === editingId);
+    if(idx > -1){
+      subs[idx] = {...subs[idx], store, client, service, day, amount, contactMethod, contactValue};
+    }
+  } else {
+    subs.push({
+      id: 'sub_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+      store, client, service, day, amount, contactMethod, contactValue,
+      lastPaid: null
+    });
+  }
+  await saveData();
+  closeModal();
+  render();
+  showToast(editingId ? 'تم تحديث الاشتراك' : 'تم إضافة الاشتراك');
+}
+
+async function markPaid(id){
+  const idx = subs.findIndex(s => s.id === id);
+  if(idx > -1){
+    subs[idx].lastPaid = new Date().toISOString().slice(0,10);
+    await saveData();
+    render();
+    showToast('تم تسجيل الدفع ✓');
+  }
+}
+
+let pendingDeleteId = null;
+
+async function deleteSub(id){
+  if(pendingDeleteId !== id){
+    // first click: arm confirmation
+    pendingDeleteId = id;
+    render();
+    return;
+  }
+  // second click: actually delete
+  pendingDeleteId = null;
+  subs = subs.filter(s => s.id !== id);
+  await deleteRemoteRow(id);
+  render();
+  showToast('تم حذف الاشتراك');
+}
+
+function cancelDelete(){
+  pendingDeleteId = null;
+  render();
+}
+
+function buildWheel(){
+  const t = todayInfo();
+  const lastDay = new Date(t.year, t.month+1, 0).getDate();
+  const cx = 90, cy = 90, r = 70;
+  let dots = '';
+  const dayCounts = {};
+  subs.forEach(s => {
+    const d = Math.min(s.day, lastDay);
+    dayCounts[d] = (dayCounts[d]||0) + 1;
+  });
+
+  for(let d=1; d<=lastDay; d++){
+    const angle = (d / lastDay) * 2 * Math.PI - Math.PI/2;
+    const x = cx + r * Math.cos(angle);
+    const y = cy + r * Math.sin(angle);
+    const isToday = d === t.day;
+    const count = dayCounts[d] || 0;
+    let fill = '#2A3450';
+    let radius = 2.2;
+    if(count > 0){ fill = '#F5A524'; radius = 3.2 + Math.min(count,4)*0.8; }
+    if(isToday){ fill = '#2DD4BF'; radius = 5; }
+    dots += `<circle cx="${x}" cy="${y}" r="${radius}" fill="${fill}"></circle>`;
+  }
+  return `<svg width="180" height="180" viewBox="0 0 180 180">
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#2A3450" stroke-width="1"></circle>
+    <text x="${cx}" y="${cy-4}" text-anchor="middle" fill="#E8EAF0" font-size="26" font-weight="800" font-family="Cairo,sans-serif">${t.day}</text>
+    <text x="${cx}" y="${cy+16}" text-anchor="middle" fill="#8A93A6" font-size="11" font-family="Cairo,sans-serif">النهاردة</text>
+    ${dots}
+  </svg>`;
+}
+
+function fmtService(s){
+  return `<span class="svc-tag">${s}</span>`;
+}
+
+function contactLink(s){
+  if(!s.contactValue) return null;
+  if(s.contactMethod === 'messenger'){
+    return { url: `https://m.me/${encodeURIComponent(s.contactValue)}`, label: 'ماسنجر' };
+  }
+  const num = s.contactValue.replace(/\D/g,'');
+  if(!num) return null;
+  return { url: `https://wa.me/${num}`, label: 'واتساب' };
+}
+
+function contactCellHtml(s){
+  const c = contactLink(s);
+  if(!c) return `<span style="color:var(--muted)">—</span>`;
+  return `<a href="${c.url}" target="_blank" rel="noopener" class="svc-tag" style="text-decoration:none;color:var(--mint);border-color:var(--mint)">${c.label} ↗</a>`;
+}
+
+function render(){
+  const app = document.getElementById('app');
+  const t = todayInfo();
+
+  const withDiff = subs.map(s => ({...s, diff: daysUntilRenewal(s.day)}));
+  const dueToday = withDiff.filter(s => s.diff === 0);
+  const dueSoon = withDiff.filter(s => s.diff > 0 && s.diff <= 3).sort((a,b)=>a.diff-b.diff);
+  const sortedAll = [...withDiff].sort((a,b)=>a.diff-b.diff);
+
+  const totalMonthly = subs.reduce((sum,s)=>sum+(s.amount||0),0);
+
+  let html = `
+    <h1>متابعة اشتراكات المتاجر</h1>
+    <p class="sub">${subs.length} اشتراك متابَع &middot; إجمالي شهري تقريبي $${totalMonthly.toFixed(2)}</p>
+
+    <div style="display:flex;gap:10px;margin-bottom:20px;">
+      <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="exportData()">⬇ تصدير نسخة احتياطية</button>
+      <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="document.getElementById('importFile').click()">⬆ استيراد نسخة</button>
+      <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(event)">
+    </div>
+
+    <div class="wheel-card">
+      ${buildWheel()}
+      <div class="wheel-info">
+        <p class="big">${dueToday.length > 0 ? dueToday.length + ' تجديد النهاردة' : 'مفيش تجديدات النهاردة'}</p>
+        <p class="desc">النقط الفاتحة (البرتقالي) بتمثل أيام فيها تجديدات، وكل ما كانت أكبر يبقى فيها اشتراكات أكتر. النقطة الخضرا هي يوم النهاردة.</p>
+      </div>
+    </div>
+
+    <div class="section-title">تجديدات النهاردة <span class="count-pill">${dueToday.length}</span></div>
+    <div class="cards">`;
+
+  if(dueToday.length === 0){
+    html += `<div class="empty">لا يوجد تجديدات مستحقة النهاردة.</div>`;
+  } else {
+    dueToday.forEach(s => {
+      html += cardHtml(s, 'today');
+    });
+  }
+  html += `</div>`;
+
+  html += `<div class="section-title">تجديدات قريبة (خلال ٣ أيام) <span class="count-pill">${dueSoon.length}</span></div>
+    <div class="cards">`;
+  if(dueSoon.length === 0){
+    html += `<div class="empty">لا يوجد تجديدات قريبة.</div>`;
+  } else {
+    dueSoon.forEach(s => {
+      html += cardHtml(s, 'soon');
+    });
+  }
+  html += `</div>`;
+
+  html += `<div class="section-title">كل الاشتراكات <span class="count-pill">${subs.length}</span></div>`;
+  if(subs.length === 0){
+    html += `<div class="empty">لسه معملتش اشتراكات. دوس على زرار (+) تحت عشان تضيف أول اشتراك.</div>`;
+  } else {
+    html += `<table><thead><tr>
+      <th>اسم الخدمة</th><th>العميل</th><th>النوع</th><th>تواصل</th><th>يوم التجديد</th><th>المبلغ</th><th>باقي كام يوم</th><th></th>
+    </tr></thead><tbody>`;
+    sortedAll.forEach(s => {
+      html += `<tr>
+        <td>${escapeHtml(s.store)}</td>
+        <td>${escapeHtml(s.client || '—')}</td>
+        <td>${fmtService(s.service)}</td>
+        <td>${contactCellHtml(s)}</td>
+        <td>${s.day}</td>
+        <td>$${(s.amount||0).toFixed(2)}</td>
+        <td>${s.diff === 0 ? 'النهاردة' : s.diff + ' يوم'}</td>
+        <td>
+          <div class="row-actions">
+            ${pendingDeleteId === s.id ? `
+              <button class="icon-btn" style="background:var(--red-dim);color:var(--red);border-color:var(--red);font-size:11px;width:auto;padding:0 8px;" onclick="deleteSub('${s.id}')" title="اضغط للتأكيد">تأكيد الحذف</button>
+              <button class="icon-btn" onclick="cancelDelete()" title="إلغاء">↩</button>
+            ` : `
+              <button class="icon-btn" onclick="openModal(subs.find(x=>x.id==='${s.id}'))" title="تعديل">✎</button>
+              <button class="icon-btn" onclick="deleteSub('${s.id}')" title="حذف">✕</button>
+            `}
+          </div>
+        </td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+
+  app.innerHTML = html;
+}
+
+function cardHtml(s, kind){
+  const c = contactLink(s);
+  return `<div class="card ${kind}">
+    <span class="badge ${kind}">${kind === 'today' ? 'النهاردة' : 'خلال ' + s.diff + ' يوم'}</span>
+    <p class="store">${escapeHtml(s.store)}</p>
+    <p class="client">${escapeHtml(s.client || '')} ${s.client ? '&middot; ' : ''}${s.service}</p>
+    <div class="meta">
+      <span>يوم ${s.day} من كل شهر</span>
+      <span class="amount">$${(s.amount||0).toFixed(2)}</span>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      ${c ? `<a href="${c.url}" target="_blank" rel="noopener" class="btn btn-ghost" style="text-decoration:none;text-align:center;display:flex;align-items:center;justify-content:center;">راسله</a>` : ''}
+      <button class="pay-btn" style="margin-top:0;flex:1;" onclick="markPaid('${s.id}')">تم الدفع ✓</button>
+    </div>
+  </div>`;
+}
+
+function escapeHtml(str){
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+document.getElementById('addBtn').addEventListener('click', () => openModal(null));
+document.getElementById('cancelBtn').addEventListener('click', closeModal);
+document.getElementById('saveBtn').addEventListener('click', handleSave);
+document.getElementById('modalBg').addEventListener('click', (e) => {
+  if(e.target.id === 'modalBg') closeModal();
+});
+
+loadData();
+</script>
+</body>
+</html>
