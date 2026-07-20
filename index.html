@@ -274,10 +274,37 @@
     </select>
     <label>تاريخ الدفع</label>
     <input id="p_date" type="date">
+    <label>الربح من الصفقة دي (جنيه)</label>
+    <div style="display:flex;gap:8px;">
+      <input id="p_profit" type="number" step="0.01" placeholder="مثال: 50" style="flex:1;">
+      <button type="button" class="btn btn-ghost" style="flex:none;padding:0 14px;" onclick="autoCalcPaymentProfit()">احسب تلقائي</button>
+    </div>
     <p id="paymentFormError" style="color:var(--red);font-size:12.5px;margin:14px 0 0;display:none;"></p>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="paymentCancelBtn">إلغاء</button>
       <button class="btn btn-primary" id="paymentSaveBtn">حفظ</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="txModalBg">
+  <div class="modal">
+    <h2 id="txModalTitle">إضافة معاملة</h2>
+    <label>النوع</label>
+    <select id="tx_type">
+      <option value="income">إيراد</option>
+      <option value="expense">مصروف</option>
+    </select>
+    <label>التاريخ</label>
+    <input id="tx_date" type="date">
+    <label>الوصف</label>
+    <input id="tx_desc" placeholder="مثال: تحصيل اشتراك متجر روزا">
+    <label>المبلغ (جنيه)</label>
+    <input id="tx_amount" type="number" step="0.01" placeholder="مثال: 200">
+    <p id="txFormError" style="color:var(--red);font-size:12.5px;margin:14px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="txCancelBtn">إلغاء</button>
+      <button class="btn btn-primary" id="txSaveBtn">حفظ</button>
     </div>
   </div>
 </div>
@@ -287,9 +314,14 @@
 <script>
 let subs = [];
 let payments = [];
+let transactions = [];
+let wallets = {vodafoneCash:0, creditCard:0, cash:0, visa:0, owedToMe:0};
 let editingId = null;
 let editingPaymentId = null;
+let editingTxId = null;
 let activeTab = 'subs';
+let paymentsMonthFilter = null;
+let ledgerMonthFilter = null;
 
 /* ====== إعدادات قاعدة البيانات (Supabase) ======
    حط هنا الـ Project URL والـ anon public key من صفحة Settings > API في مشروعك على supabase.com
@@ -348,7 +380,8 @@ function toRemotePaymentShape(p){
     contact_value: p.contactValue || null,
     amount: p.amount || 0,
     currency: p.currency || 'EGP',
-    paid_date: p.paidDate || null
+    paid_date: p.paidDate || null,
+    profit: p.profit || 0
   };
 }
 
@@ -361,7 +394,49 @@ function fromRemotePaymentShape(r){
     contactValue: r.contact_value,
     amount: r.amount,
     currency: r.currency,
-    paidDate: r.paid_date
+    paidDate: r.paid_date,
+    profit: r.profit || 0
+  };
+}
+
+function toRemoteTxShape(t){
+  return {
+    id: t.id,
+    date: t.date,
+    type: t.type,
+    description: t.description || null,
+    amount: t.amount || 0
+  };
+}
+
+function fromRemoteTxShape(r){
+  return {
+    id: r.id,
+    date: r.date,
+    type: r.type,
+    description: r.description,
+    amount: r.amount
+  };
+}
+
+function toRemoteWalletShape(w){
+  return {
+    id: 'main',
+    vodafone_cash: w.vodafoneCash || 0,
+    credit_card: w.creditCard || 0,
+    cash: w.cash || 0,
+    visa: w.visa || 0,
+    owed_to_me: w.owedToMe || 0
+  };
+}
+
+function fromRemoteWalletShape(r){
+  return {
+    vodafoneCash: r.vodafone_cash || 0,
+    creditCard: r.credit_card || 0,
+    cash: r.cash || 0,
+    visa: r.visa || 0,
+    owedToMe: r.owed_to_me || 0
   };
 }
 
@@ -483,6 +558,8 @@ async function loadData(){
     subs = [];
   }
   await loadPayments();
+  await loadTransactions();
+  await loadWallets();
   fetchLiveRate();
   render();
 }
@@ -527,6 +604,74 @@ async function deleteRemotePaymentRow(id){
   }catch(e){
     console.error('delete payment error', e);
     showToast('حصل خطأ في حذف الدفعة', true);
+  }
+}
+
+async function loadTransactions(){
+  if(!isConfigured()) return;
+  try{
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/transactions?select=*`, { headers: sbHeaders() });
+    if(!res.ok) throw new Error('fetch failed: ' + res.status);
+    const rows = await res.json();
+    transactions = rows.map(fromRemoteTxShape);
+  }catch(e){
+    console.error('load transactions error', e);
+    showToast('حصل خطأ في تحميل المعاملات (اتأكدت من إنشاء جدول transactions؟)', true);
+    transactions = [];
+  }
+}
+
+async function saveTransactions(){
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/transactions`, {
+      method: 'POST',
+      headers: sbHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify(transactions.map(toRemoteTxShape))
+    });
+  }catch(e){
+    console.error('save transactions error', e);
+    showToast('حصل خطأ في حفظ المعاملة', true);
+  }
+}
+
+async function deleteRemoteTxRow(id){
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/transactions?id=eq.${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: sbHeaders()
+    });
+  }catch(e){
+    console.error('delete tx error', e);
+    showToast('حصل خطأ في حذف المعاملة', true);
+  }
+}
+
+async function loadWallets(){
+  if(!isConfigured()) return;
+  try{
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/wallets?select=*&id=eq.main`, { headers: sbHeaders() });
+    if(!res.ok) throw new Error('fetch failed: ' + res.status);
+    const rows = await res.json();
+    if(rows.length > 0) wallets = fromRemoteWalletShape(rows[0]);
+  }catch(e){
+    console.error('load wallets error', e);
+    showToast('حصل خطأ في تحميل أرصدة المحافظ (اتأكدت من إنشاء جدول wallets؟)', true);
+  }
+}
+
+async function saveWallets(){
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/wallets`, {
+      method: 'POST',
+      headers: sbHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify([toRemoteWalletShape(wallets)])
+    });
+  }catch(e){
+    console.error('save wallets error', e);
+    showToast('حصل خطأ في حفظ الأرصدة', true);
   }
 }
 
@@ -678,12 +823,36 @@ function openPaymentModal(p){
   document.getElementById('p_amount').value = p ? p.amount : '';
   document.getElementById('p_currency').value = p ? (p.currency || 'EGP') : 'EGP';
   document.getElementById('p_date').value = p ? (p.paidDate || '') : new Date().toISOString().slice(0,10);
+  document.getElementById('p_profit').value = p ? (p.profit || '') : '';
   updatePaymentContactLabel();
   document.getElementById('paymentFormError').style.display = 'none';
   document.getElementById('paymentModalBg').classList.add('open');
 }
 function closePaymentModal(){
   document.getElementById('paymentModalBg').classList.remove('open');
+}
+
+async function autoCalcPaymentProfit(){
+  const amount = parseFloat(document.getElementById('p_amount').value) || 0;
+  const currency = document.getElementById('p_currency').value;
+  if(!amount){
+    showToast('اكتب المبلغ الأول', true);
+    return;
+  }
+  let profit;
+  if(currency === 'EGP'){
+    profit = amount * 0.07;
+  } else {
+    const rate = await fetchRateFor(currency);
+    if(!rate){
+      showToast('اتعذر جلب سعر الصرف، اكتب الربح يدوي', true);
+      return;
+    }
+    profit = (amount * rate) * 0.10;
+  }
+  if(profit < MIN_PROFIT) profit = MIN_PROFIT;
+  document.getElementById('p_profit').value = profit.toFixed(2);
+  showToast('اتحسب الربح تلقائي، تقدر تعدله لو حابب');
 }
 
 async function handlePaymentSave(){
@@ -694,6 +863,7 @@ async function handlePaymentSave(){
   const amount = parseFloat(document.getElementById('p_amount').value) || 0;
   const currency = document.getElementById('p_currency').value;
   const paidDate = document.getElementById('p_date').value;
+  const profit = parseFloat(document.getElementById('p_profit').value) || 0;
 
   const errEl = document.getElementById('paymentFormError');
   if(!description || !amount){
@@ -706,12 +876,12 @@ async function handlePaymentSave(){
   if(editingPaymentId){
     const idx = payments.findIndex(p => p.id === editingPaymentId);
     if(idx > -1){
-      payments[idx] = {...payments[idx], description, client, contactMethod, contactValue, amount, currency, paidDate};
+      payments[idx] = {...payments[idx], description, client, contactMethod, contactValue, amount, currency, paidDate, profit};
     }
   } else {
     payments.push({
       id: 'pay_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
-      description, client, contactMethod, contactValue, amount, currency, paidDate
+      description, client, contactMethod, contactValue, amount, currency, paidDate, profit
     });
   }
   await savePayments();
@@ -738,6 +908,84 @@ async function deletePayment(id){
 function cancelDeletePayment(){
   pendingDeletePaymentId = null;
   render();
+}
+
+function openTxModal(t){
+  editingTxId = t ? t.id : null;
+  document.getElementById('txModalTitle').textContent = t ? 'تعديل معاملة' : 'إضافة معاملة';
+  document.getElementById('tx_type').value = t ? t.type : 'income';
+  document.getElementById('tx_date').value = t ? t.date : new Date().toISOString().slice(0,10);
+  document.getElementById('tx_desc').value = t ? (t.description || '') : '';
+  document.getElementById('tx_amount').value = t ? t.amount : '';
+  document.getElementById('txFormError').style.display = 'none';
+  document.getElementById('txModalBg').classList.add('open');
+}
+function closeTxModal(){
+  document.getElementById('txModalBg').classList.remove('open');
+}
+
+async function handleTxSave(){
+  const type = document.getElementById('tx_type').value;
+  const date = document.getElementById('tx_date').value;
+  const description = document.getElementById('tx_desc').value.trim();
+  const amount = parseFloat(document.getElementById('tx_amount').value) || 0;
+
+  const errEl = document.getElementById('txFormError');
+  if(!date || !amount){
+    errEl.textContent = 'من فضلك اختار التاريخ واكتب مبلغ صحيح';
+    errEl.style.display = 'block';
+    return;
+  }
+  errEl.style.display = 'none';
+
+  if(editingTxId){
+    const idx = transactions.findIndex(t => t.id === editingTxId);
+    if(idx > -1){
+      transactions[idx] = {...transactions[idx], type, date, description, amount};
+    }
+  } else {
+    transactions.push({
+      id: 'tx_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+      type, date, description, amount
+    });
+  }
+  await saveTransactions();
+  closeTxModal();
+  render();
+  showToast(editingTxId ? 'تم تحديث المعاملة' : 'تم إضافة المعاملة');
+}
+
+let pendingDeleteTxId = null;
+
+async function deleteTx(id){
+  if(pendingDeleteTxId !== id){
+    pendingDeleteTxId = id;
+    render();
+    return;
+  }
+  pendingDeleteTxId = null;
+  transactions = transactions.filter(t => t.id !== id);
+  await deleteRemoteTxRow(id);
+  render();
+  showToast('تم حذف المعاملة');
+}
+
+function cancelDeleteTx(){
+  pendingDeleteTxId = null;
+  render();
+}
+
+async function saveWalletsFromForm(){
+  wallets = {
+    vodafoneCash: parseFloat(document.getElementById('w_vodafone').value) || 0,
+    creditCard: parseFloat(document.getElementById('w_credit').value) || 0,
+    cash: parseFloat(document.getElementById('w_cash').value) || 0,
+    visa: parseFloat(document.getElementById('w_visa').value) || 0,
+    owedToMe: parseFloat(document.getElementById('w_owed').value) || 0
+  };
+  await saveWallets();
+  render();
+  showToast('تم حفظ الأرصدة');
 }
 
 function buildWheel(list){
@@ -797,12 +1045,14 @@ let liveUsdRate = null;
 let rateLastUpdated = null;
 let rateFetchFailed = false;
 
+const RATE_BUFFER = 0.5; // هامش أمان (نص دولار) فوق السعر اللي بييجي من المصدر
+
 async function fetchLiveRate(){
   try{
     const res = await fetch('https://api.frankfurter.dev/v2/rate/USD/EGP');
     if(!res.ok) throw new Error('rate fetch failed');
     const data = await res.json();
-    liveUsdRate = data.rate;
+    liveUsdRate = data.rate + RATE_BUFFER;
     rateLastUpdated = new Date();
     rateFetchFailed = false;
   }catch(e){
@@ -818,7 +1068,7 @@ async function fetchRateFor(currency){
     const res = await fetch(`https://api.frankfurter.dev/v2/rate/${currency}/EGP`);
     if(!res.ok) throw new Error('rate fetch failed');
     const data = await res.json();
-    return data.rate;
+    return data.rate + RATE_BUFFER;
   }catch(e){
     console.error('rate error', e);
     return null;
@@ -864,6 +1114,8 @@ async function onCalcCurrencyChange(){
   }
 }
 
+const MIN_PROFIT = 35; // أقل هامش ربح مقبول بالجنيه
+
 function runCalculation(){
   const amount = parseFloat(document.getElementById('calc_amount').value) || 0;
   calcAmountValue = document.getElementById('calc_amount').value;
@@ -873,7 +1125,8 @@ function runCalculation(){
   }
   if(calcCurrency === 'EGP'){
     const bankFee = amount * 0.03;
-    const profit = amount * 0.07;
+    let profit = amount * 0.07;
+    if(profit < MIN_PROFIT) profit = MIN_PROFIT;
     const total = amount + bankFee + profit;
     calcResult = {
       type: 'egp',
@@ -889,7 +1142,8 @@ function runCalculation(){
     }
     calcRateValue = rate;
     const converted = amount * rate;
-    const profit = converted * 0.10;
+    let profit = converted * 0.10;
+    if(profit < MIN_PROFIT) profit = MIN_PROFIT;
     const total = converted + profit;
     calcResult = {
       type: 'foreign',
@@ -932,6 +1186,7 @@ function tabBarHtml(){
     <button class="tab-btn ${activeTab==='subs'?'active':''}" onclick="switchTab('subs')">الاشتراكات</button>
     <button class="tab-btn ${activeTab==='payments'?'active':''}" onclick="switchTab('payments')">مدفوعات</button>
     <button class="tab-btn ${activeTab==='calc'?'active':''}" onclick="switchTab('calc')">حاسبة التسعير</button>
+    <button class="tab-btn ${activeTab==='ledger'?'active':''}" onclick="switchTab('ledger')">الماليات</button>
   </div>`;
 }
 
@@ -953,6 +1208,11 @@ function render(){
     fab.title = 'إضافة دفعة';
     fab.onclick = () => openPaymentModal(null);
     html += renderPaymentsTab();
+  } else if(activeTab === 'ledger'){
+    fab.style.display = 'flex';
+    fab.title = 'إضافة معاملة';
+    fab.onclick = () => openTxModal(null);
+    html += renderLedgerTab();
   } else {
     fab.style.display = 'none';
     html += renderCalcTab();
@@ -1090,18 +1350,69 @@ function paymentCurrencyLabel(c){
   return {EGP:'ج.م', USD:'$', EUR:'€', GBP:'£'}[c] || c;
 }
 
+function monthLabel(ym){
+  if(!ym) return '';
+  const [y,m] = ym.split('-');
+  const names = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+  return `${names[parseInt(m,10)-1]} ${y}`;
+}
+
+function getAvailableMonths(list, dateField){
+  const set = new Set();
+  list.forEach(item => {
+    const d = item[dateField];
+    if(d) set.add(d.slice(0,7));
+  });
+  return [...set].sort().reverse();
+}
+
+function switchPaymentsMonth(val){
+  paymentsMonthFilter = val === 'all' ? null : val;
+  render();
+}
+
 function renderPaymentsTab(){
-  const totalEgp = payments.filter(p=>p.currency==='EGP').reduce((s,p)=>s+(p.amount||0),0);
-  const sorted = [...payments].sort((a,b)=> (b.paidDate||'').localeCompare(a.paidDate||''));
+  const months = getAvailableMonths(payments, 'paidDate');
+  const currentMonth = new Date().toISOString().slice(0,7);
+  if(paymentsMonthFilter === null && months.length > 0 && !months.includes(currentMonth)){
+    // لو مفيش دفعات في الشهر الحالي، سيبها على "كل الشهور" بدل ما تظهر فاضية
+  }
+  const filtered = paymentsMonthFilter
+    ? payments.filter(p => (p.paidDate || '').slice(0,7) === paymentsMonthFilter)
+    : payments;
 
-  let html = `<p class="sub">${payments.length} دفعة مسجلة &middot; إجمالي بالجنيه ${totalEgp.toFixed(2)} ج.م (المبالغ غير الجنيه مش محسوبة هنا)</p>`;
+  const totalEgp = filtered.filter(p=>p.currency==='EGP').reduce((s,p)=>s+(p.amount||0),0);
+  const totalProfit = filtered.reduce((s,p)=>s+(p.profit||0),0);
+  const sorted = [...filtered].sort((a,b)=> (b.paidDate||'').localeCompare(a.paidDate||''));
 
-  html += `<div class="section-title">كل المدفوعات <span class="count-pill">${payments.length}</span></div>`;
-  if(payments.length === 0){
-    html += `<div class="empty">لسه معملتش دفعات. دوس على زرار (+) تحت عشان تضيف أول دفعة.</div>`;
+  let html = `<div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
+    <select onchange="switchPaymentsMonth(this.value)" style="width:auto;">
+      <option value="all" ${!paymentsMonthFilter?'selected':''}>كل الشهور</option>
+      ${months.map(m => `<option value="${m}" ${paymentsMonthFilter===m?'selected':''}>${monthLabel(m)}</option>`).join('')}
+    </select>
+  </div>`;
+
+  html += `<div class="cards" style="margin-bottom:20px;">
+    <div class="card" style="cursor:default;">
+      <p class="client" style="margin-bottom:6px;">عدد الدفعات ${paymentsMonthFilter ? '(' + monthLabel(paymentsMonthFilter) + ')' : ''}</p>
+      <p class="store" style="font-size:22px;">${filtered.length}</p>
+    </div>
+    <div class="card" style="cursor:default;">
+      <p class="client" style="margin-bottom:6px;">إجمالي المحصّل (جنيه)</p>
+      <p class="store" style="font-size:22px;">${totalEgp.toFixed(2)}</p>
+    </div>
+    <div class="card" style="cursor:default;border-color:var(--mint);">
+      <p class="client" style="margin-bottom:6px;">هامش الربح</p>
+      <p class="store" style="font-size:22px;color:var(--mint);">${totalProfit.toFixed(2)} ج.م</p>
+    </div>
+  </div>`;
+
+  html += `<div class="section-title">${paymentsMonthFilter ? 'دفعات ' + monthLabel(paymentsMonthFilter) : 'كل المدفوعات'} <span class="count-pill">${filtered.length}</span></div>`;
+  if(filtered.length === 0){
+    html += `<div class="empty">مفيش دفعات في الفترة دي. دوس على زرار (+) تحت عشان تضيف دفعة.</div>`;
   } else {
     html += `<table><thead><tr>
-      <th>الوصف</th><th>العميل</th><th>تواصل</th><th>المبلغ</th><th>التاريخ</th><th></th>
+      <th>الوصف</th><th>العميل</th><th>تواصل</th><th>المبلغ</th><th>الربح</th><th>التاريخ</th><th></th>
     </tr></thead><tbody>`;
     sorted.forEach(p => {
       html += `<tr>
@@ -1109,6 +1420,7 @@ function renderPaymentsTab(){
         <td>${escapeHtml(p.client || '—')}</td>
         <td>${contactCellHtml(p)}</td>
         <td>${(p.amount||0).toFixed(2)} ${paymentCurrencyLabel(p.currency)}</td>
+        <td style="color:var(--mint);">${(p.profit||0).toFixed(2)} ج.م</td>
         <td>${p.paidDate || '—'}</td>
         <td>
           <div class="row-actions">
@@ -1154,9 +1466,117 @@ function renderCalcTab(){
       <button class="btn btn-primary" style="width:100%;margin-top:16px;" onclick="runCalculation()">احسب التكلفة</button>
       ${calcResultHtml()}
       <p style="color:var(--muted);font-size:12px;margin-top:16px;line-height:1.7;">
-        القاعدة: لو المبلغ بالجنيه بيتضاف ٣٪ نسبة بنك + ٧٪ ربح. لو بعملة أجنبية، بيتحول للجنيه بسعر الصرف ثم يتضاف ١٠٪ ربح.
+        القاعدة: لو المبلغ بالجنيه بيتضاف ٣٪ نسبة بنك + ٧٪ ربح. لو بعملة أجنبية، بيتحول للجنيه بسعر الصرف ثم يتضاف ١٠٪ ربح. الحد الأدنى للربح ٣٥ جنيه في الحالتين.
       </p>
     </div>`;
+}
+
+function switchLedgerMonth(val){
+  ledgerMonthFilter = val === 'all' ? null : val;
+  render();
+}
+
+function renderLedgerTab(){
+  const allIncome = transactions.filter(t=>t.type==='income').reduce((s,t)=>s+(t.amount||0),0);
+  const allExpense = transactions.filter(t=>t.type==='expense').reduce((s,t)=>s+(t.amount||0),0);
+  const expectedBalance = allIncome - allExpense;
+
+  const actualTotal = (wallets.vodafoneCash||0) + (wallets.creditCard||0) + (wallets.cash||0) + (wallets.visa||0) + (wallets.owedToMe||0);
+  const diff = actualTotal - expectedBalance;
+
+  const months = getAvailableMonths(transactions, 'date');
+  const filtered = ledgerMonthFilter
+    ? transactions.filter(t => (t.date||'').slice(0,7) === ledgerMonthFilter)
+    : transactions;
+  const periodIncome = filtered.filter(t=>t.type==='income').reduce((s,t)=>s+(t.amount||0),0);
+  const periodExpense = filtered.filter(t=>t.type==='expense').reduce((s,t)=>s+(t.amount||0),0);
+  const sorted = [...filtered].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+
+  let html = `<p class="sub">تتبّع الإيراد والمصروف اليومي، وقارنه بأرصدتك الفعلية</p>`;
+
+  // بطاقة التسوية (المفروض معايا فلوس كام)
+  html += `<div class="calc-card" style="margin-bottom:22px;">
+    <p style="font-family:'Cairo',sans-serif;font-weight:700;font-size:15px;margin:0 0 4px;">المفروض معايا فلوس كام دلوقتي؟</p>
+    <p style="color:var(--muted);font-size:12.5px;margin:0 0 14px;">محسوبة من كل الإيرادات ناقص كل المصروفات من أول ما بدأت</p>
+    <div class="result-box" style="margin-top:0;">
+      <div class="result-line total" style="border-top:none;padding-top:0;"><span>الرصيد المتوقع</span><span>${expectedBalance.toFixed(2)} ج.م</span></div>
+    </div>
+
+    <p style="font-family:'Cairo',sans-serif;font-weight:700;font-size:15px;margin:20px 0 10px;">أرصدتك الفعلية دلوقتي</p>
+    <div class="calc-row">
+      <div><label style="margin-top:0;">فودافون كاش</label><input id="w_vodafone" type="number" step="0.01" value="${wallets.vodafoneCash||0}"></div>
+      <div><label style="margin-top:0;">كريديت كارد</label><input id="w_credit" type="number" step="0.01" value="${wallets.creditCard||0}"></div>
+    </div>
+    <div class="calc-row">
+      <div><label style="margin-top:0;">كاش</label><input id="w_cash" type="number" step="0.01" value="${wallets.cash||0}"></div>
+      <div><label style="margin-top:0;">فيزا</label><input id="w_visa" type="number" step="0.01" value="${wallets.visa||0}"></div>
+    </div>
+    <label style="margin-top:0;">فلوس ليا بره (مستحقات)</label>
+    <input id="w_owed" type="number" step="0.01" value="${wallets.owedToMe||0}">
+    <button class="btn btn-primary" style="width:100%;margin-top:14px;" onclick="saveWalletsFromForm()">حفظ الأرصدة</button>
+
+    <div class="result-box">
+      <div class="result-line"><span>إجمالي الأرصدة الفعلية</span><span>${actualTotal.toFixed(2)} ج.م</span></div>
+      <div class="result-line"><span>الرصيد المتوقع</span><span>${expectedBalance.toFixed(2)} ج.م</span></div>
+      <div class="result-line total" style="color:${Math.abs(diff) < 1 ? 'var(--mint)' : 'var(--red)'};">
+        <span>${Math.abs(diff) < 1 ? 'مطابق ✓' : (diff > 0 ? 'زيادة عن المتوقع' : 'ناقص عن المتوقع')}</span>
+        <span>${diff >= 0 ? '+' : ''}${diff.toFixed(2)} ج.م</span>
+      </div>
+    </div>
+  </div>`;
+
+  // ملخص الفترة + فلتر الشهر
+  html += `<div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
+    <select onchange="switchLedgerMonth(this.value)" style="width:auto;">
+      <option value="all" ${!ledgerMonthFilter?'selected':''}>كل الشهور</option>
+      ${months.map(m => `<option value="${m}" ${ledgerMonthFilter===m?'selected':''}>${monthLabel(m)}</option>`).join('')}
+    </select>
+  </div>`;
+
+  html += `<div class="cards" style="margin-bottom:20px;">
+    <div class="card" style="cursor:default;border-color:var(--mint);">
+      <p class="client" style="margin-bottom:6px;">إيراد ${ledgerMonthFilter ? monthLabel(ledgerMonthFilter) : 'كل الفترات'}</p>
+      <p class="store" style="font-size:20px;color:var(--mint);">${periodIncome.toFixed(2)} ج.م</p>
+    </div>
+    <div class="card" style="cursor:default;border-color:var(--red);">
+      <p class="client" style="margin-bottom:6px;">مصروف ${ledgerMonthFilter ? monthLabel(ledgerMonthFilter) : 'كل الفترات'}</p>
+      <p class="store" style="font-size:20px;color:var(--red);">${periodExpense.toFixed(2)} ج.م</p>
+    </div>
+    <div class="card" style="cursor:default;">
+      <p class="client" style="margin-bottom:6px;">صافي الفترة</p>
+      <p class="store" style="font-size:20px;">${(periodIncome-periodExpense).toFixed(2)} ج.م</p>
+    </div>
+  </div>`;
+
+  html += `<div class="section-title">${ledgerMonthFilter ? 'معاملات ' + monthLabel(ledgerMonthFilter) : 'كل المعاملات'} <span class="count-pill">${filtered.length}</span></div>`;
+  if(filtered.length === 0){
+    html += `<div class="empty">مفيش معاملات مسجلة في الفترة دي. دوس على زرار (+) تحت عشان تضيف معاملة.</div>`;
+  } else {
+    html += `<table><thead><tr>
+      <th>التاريخ</th><th>النوع</th><th>الوصف</th><th>المبلغ</th><th></th>
+    </tr></thead><tbody>`;
+    sorted.forEach(t => {
+      html += `<tr>
+        <td>${t.date}</td>
+        <td><span class="svc-tag" style="${t.type==='income' ? 'color:var(--mint);border-color:var(--mint);' : 'color:var(--red);border-color:var(--red);'}">${t.type==='income' ? 'إيراد' : 'مصروف'}</span></td>
+        <td>${escapeHtml(t.description || '—')}</td>
+        <td style="color:${t.type==='income' ? 'var(--mint)' : 'var(--red)'};">${t.type==='income'?'+':'-'}${(t.amount||0).toFixed(2)} ج.م</td>
+        <td>
+          <div class="row-actions">
+            ${pendingDeleteTxId === t.id ? `
+              <button class="icon-btn" style="background:var(--red-dim);color:var(--red);border-color:var(--red);font-size:11px;width:auto;padding:0 8px;" onclick="deleteTx('${t.id}')" title="اضغط للتأكيد">تأكيد الحذف</button>
+              <button class="icon-btn" onclick="cancelDeleteTx()" title="إلغاء">↩</button>
+            ` : `
+              <button class="icon-btn" onclick="openTxModal(transactions.find(x=>x.id==='${t.id}'))" title="تعديل">✎</button>
+              <button class="icon-btn" onclick="deleteTx('${t.id}')" title="حذف">✕</button>
+            `}
+          </div>
+        </td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+  return html;
 }
 
 function isPaidToday(s){
@@ -1204,6 +1624,11 @@ document.getElementById('paymentCancelBtn').addEventListener('click', closePayme
 document.getElementById('paymentSaveBtn').addEventListener('click', handlePaymentSave);
 document.getElementById('paymentModalBg').addEventListener('click', (e) => {
   if(e.target.id === 'paymentModalBg') closePaymentModal();
+});
+document.getElementById('txCancelBtn').addEventListener('click', closeTxModal);
+document.getElementById('txSaveBtn').addEventListener('click', handleTxSave);
+document.getElementById('txModalBg').addEventListener('click', (e) => {
+  if(e.target.id === 'txModalBg') closeTxModal();
 });
 
 /* ====== شاشة القفل ====== */
