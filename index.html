@@ -237,8 +237,15 @@
       <option value="ChatGPT">ChatGPT</option>
       <option value="أخرى">أخرى</option>
     </select>
-    <label>يوم التجديد الشهري (١-٣١)</label>
-    <input id="f_day" type="number" min="1" max="31" placeholder="مثال: 15">
+    <label>تاريخ التجديد القادم</label>
+    <input id="f_renewalDate" type="date">
+    <label>مدة الاشتراك</label>
+    <select id="f_cycle">
+      <option value="1">شهري</option>
+      <option value="3">ربع سنوي (كل ٣ شهور)</option>
+      <option value="6">نصف سنوي (كل ٦ شهور)</option>
+      <option value="12">سنوي</option>
+    </select>
     <label>المبلغ (بالدولار)</label>
     <input id="f_amount" type="number" step="0.01" placeholder="مثال: 39">
     <p id="formError" style="color:var(--red);font-size:12.5px;margin:14px 0 0;display:none;"></p>
@@ -347,12 +354,14 @@ function toRemoteShape(s){
     store: s.store,
     client: s.client || null,
     service: s.service,
-    day: s.day,
+    day: s.renewalDate ? parseInt(s.renewalDate.split('-')[2], 10) : (s.day || 1),
     amount: s.amount || 0,
     contact_method: s.contactMethod || null,
     contact_value: s.contactValue || null,
     last_paid: s.lastPaid || null,
-    cancelled: !!s.cancelled
+    cancelled: !!s.cancelled,
+    renewal_date: s.renewalDate || null,
+    cycle_months: s.cycleMonths || 1
   };
 }
 
@@ -367,7 +376,9 @@ function fromRemoteShape(r){
     contactMethod: r.contact_method,
     contactValue: r.contact_value,
     lastPaid: r.last_paid,
-    cancelled: !!r.cancelled
+    cancelled: !!r.cancelled,
+    renewalDate: r.renewal_date || null,
+    cycleMonths: r.cycle_months || 1
   };
 }
 
@@ -479,7 +490,8 @@ async function importData(event){
 
     let added = 0, updated = 0;
     parsed.forEach(item => {
-      if(!item.store || !item.day) return;
+      if(!item.store || (!item.renewalDate && !item.day)) return;
+      migrateSub(item);
       const idx = item.id ? subs.findIndex(s => s.id === item.id) : -1;
       if(idx > -1){
         subs[idx] = {...subs[idx], ...item};
@@ -514,27 +526,48 @@ function toISODateLocal(d){
   return `${yyyy}-${mm}-${dd}`;
 }
 
-/* بيرجع رقم: سالب = متأخر بكذا يوم، صفر = مستحق النهاردة، موجب = باقي كذا يوم.
-   بياخد بالاعتبار هل اتدفع للدورة الحالية ولا لأ. */
+/* بتضيف عدد شهور لتاريخ، مع مراعاة نهاية الشهر (مثلاً 31 يناير + شهر = 28/29 فبراير) */
+function addMonthsClamped(dateStr, n){
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const totalMonths = (m - 1) + n;
+  const newYear = y + Math.floor(totalMonths / 12);
+  const newMonth = ((totalMonths % 12) + 12) % 12;
+  const lastDay = new Date(newYear, newMonth + 1, 0).getDate();
+  const newDay = Math.min(d, lastDay);
+  return toISODateLocal(new Date(newYear, newMonth, newDay));
+}
+
+/* بيرجع رقم: سالب = متأخر بكذا يوم، صفر = مستحق النهاردة، موجب = باقي كذا يوم */
 function computeDiff(sub){
   const now = new Date();
   const todayLocal = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const todayStr = toISODateLocal(todayLocal);
+  const [y, m, d] = sub.renewalDate.split('-').map(Number);
+  const dueDate = new Date(y, m - 1, d);
+  return Math.round((dueDate - todayLocal) / 86400000);
+}
 
-  const lastDayThisMonth = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
-  const thisRenewalDay = Math.min(sub.day, lastDayThisMonth);
-  const thisRenewalDate = new Date(now.getFullYear(), now.getMonth(), thisRenewalDay);
-  const thisRenewalStr = toISODateLocal(thisRenewalDate);
-
-  const paidThisCycle = sub.lastPaid && sub.lastPaid >= thisRenewalStr;
-
-  if(paidThisCycle){
-    const lastDayNext = new Date(now.getFullYear(), now.getMonth()+2, 0).getDate();
-    const nextRenewalDay = Math.min(sub.day, lastDayNext);
-    const nextRenewalDate = new Date(now.getFullYear(), now.getMonth()+1, nextRenewalDay);
-    return Math.round((nextRenewalDate - todayLocal) / 86400000);
+/* لترقية الاشتراكات القديمة (اللي متسجلة بنظام "يوم في الشهر" بس) لنظام تاريخ التجديد + الدورة.
+   بترجع true لو الاشتراك اتغيّر وبيحتاج حفظ. */
+function migrateSub(s){
+  let changed = false;
+  if(!s.cycleMonths){ s.cycleMonths = 1; changed = true; }
+  if(!s.renewalDate){
+    const now = new Date();
+    const lastDayThisMonth = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+    const day = s.day || 1;
+    const thisDay = Math.min(day, lastDayThisMonth);
+    let renewalDate = toISODateLocal(new Date(now.getFullYear(), now.getMonth(), thisDay));
+    if(s.lastPaid && s.lastPaid >= renewalDate){
+      renewalDate = addMonthsClamped(renewalDate, 1);
+    }
+    s.renewalDate = renewalDate;
+    changed = true;
   }
-  return Math.round((thisRenewalDate - todayLocal) / 86400000);
+  return changed;
+}
+
+function cycleLabel(n){
+  return {1:'شهري', 3:'ربع سنوي', 6:'نصف سنوي', 12:'سنوي'}[n] || `كل ${n} شهر`;
 }
 
 async function loadData(){
@@ -552,6 +585,9 @@ async function loadData(){
     if(!res.ok) throw new Error('fetch failed: ' + res.status);
     const rows = await res.json();
     subs = rows.map(fromRemoteShape);
+    let anyMigrated = false;
+    subs.forEach(s => { if(migrateSub(s)) anyMigrated = true; });
+    if(anyMigrated) await saveData();
   }catch(e){
     console.error('load error', e);
     showToast('حصل خطأ في تحميل بيانات الاشتراكات', true);
@@ -721,7 +757,8 @@ function openModal(sub){
   document.getElementById('f_store').value = sub ? sub.store : '';
   document.getElementById('f_client').value = sub ? sub.client : '';
   document.getElementById('f_service').value = sub ? sub.service : 'Shopify';
-  document.getElementById('f_day').value = sub ? sub.day : '';
+  document.getElementById('f_renewalDate').value = sub ? sub.renewalDate : new Date().toISOString().slice(0,10);
+  document.getElementById('f_cycle').value = sub ? (sub.cycleMonths || 1) : 1;
   document.getElementById('f_amount').value = sub ? sub.amount : '';
   document.getElementById('f_contactMethod').value = sub ? (sub.contactMethod || 'whatsapp') : 'whatsapp';
   document.getElementById('f_contactValue').value = sub ? (sub.contactValue || '') : '';
@@ -737,14 +774,15 @@ async function handleSave(){
   const store = document.getElementById('f_store').value.trim();
   const client = document.getElementById('f_client').value.trim();
   const service = document.getElementById('f_service').value;
-  const day = parseInt(document.getElementById('f_day').value);
+  const renewalDate = document.getElementById('f_renewalDate').value;
+  const cycleMonths = parseInt(document.getElementById('f_cycle').value, 10);
   const amount = parseFloat(document.getElementById('f_amount').value) || 0;
   const contactMethod = document.getElementById('f_contactMethod').value;
   const contactValue = document.getElementById('f_contactValue').value.trim();
 
   const errEl = document.getElementById('formError');
-  if(!store || !day || day < 1 || day > 31){
-    errEl.textContent = 'من فضلك اكتب اسم الخدمة ويوم تجديد صحيح (١-٣١)';
+  if(!store || !renewalDate){
+    errEl.textContent = 'من فضلك اكتب اسم الخدمة واختار تاريخ التجديد';
     errEl.style.display = 'block';
     return;
   }
@@ -753,12 +791,12 @@ async function handleSave(){
   if(editingId){
     const idx = subs.findIndex(s => s.id === editingId);
     if(idx > -1){
-      subs[idx] = {...subs[idx], store, client, service, day, amount, contactMethod, contactValue};
+      subs[idx] = {...subs[idx], store, client, service, renewalDate, cycleMonths, amount, contactMethod, contactValue};
     }
   } else {
     subs.push({
       id: 'sub_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
-      store, client, service, day, amount, contactMethod, contactValue,
+      store, client, service, renewalDate, cycleMonths, amount, contactMethod, contactValue,
       lastPaid: null
     });
   }
@@ -772,6 +810,7 @@ async function markPaid(id){
   const idx = subs.findIndex(s => s.id === id);
   if(idx > -1){
     subs[idx].lastPaid = new Date().toISOString().slice(0,10);
+    subs[idx].renewalDate = addMonthsClamped(subs[idx].renewalDate, subs[idx].cycleMonths || 1);
     await saveData();
     render();
     showToast('تم تسجيل الدفع ✓');
@@ -996,8 +1035,12 @@ function buildWheel(list){
   let dots = '';
   const dayCounts = {};
   subsList.forEach(s => {
-    const d = Math.min(s.day, lastDay);
-    dayCounts[d] = (dayCounts[d]||0) + 1;
+    if(!s.renewalDate) return;
+    const [ry, rm, rd] = s.renewalDate.split('-').map(Number);
+    if(ry === t.year && (rm - 1) === t.month){
+      const d = Math.min(rd, lastDay);
+      dayCounts[d] = (dayCounts[d]||0) + 1;
+    }
   });
 
   for(let d=1; d<=lastDay; d++){
@@ -1278,7 +1321,7 @@ function renderSubsTab(){
     html += `<div class="empty">لسه معملتش اشتراكات. دوس على زرار (+) تحت عشان تضيف أول اشتراك.</div>`;
   } else {
     html += `<table><thead><tr>
-      <th>اسم الخدمة</th><th>العميل</th><th>النوع</th><th>تواصل</th><th>يوم التجديد</th><th>المبلغ</th><th>الحالة</th><th>آخر دفعة</th><th></th>
+      <th>اسم الخدمة</th><th>العميل</th><th>النوع</th><th>تواصل</th><th>تاريخ التجديد</th><th>الدورة</th><th>المبلغ</th><th>الحالة</th><th>آخر دفعة</th><th></th>
     </tr></thead><tbody>`;
     sortedAll.forEach(s => {
       let statusText, statusColor;
@@ -1290,7 +1333,8 @@ function renderSubsTab(){
         <td>${escapeHtml(s.client || '—')}</td>
         <td>${fmtService(s.service)}</td>
         <td>${contactCellHtml(s)}</td>
-        <td>${s.day}</td>
+        <td>${s.renewalDate}</td>
+        <td>${cycleLabel(s.cycleMonths || 1)}</td>
         <td>$${(s.amount||0).toFixed(2)}</td>
         <td style="color:${statusColor};font-weight:600;">${statusText}</td>
         <td>${s.lastPaid ? s.lastPaid : '—'}</td>
@@ -1596,7 +1640,7 @@ function cardHtml(s, kind){
     <p class="store">${escapeHtml(s.store)}</p>
     <p class="client">${escapeHtml(s.client || '')} ${s.client ? '&middot; ' : ''}${s.service}</p>
     <div class="meta">
-      <span>يوم ${s.day} من كل شهر</span>
+      <span>${s.renewalDate} &middot; ${cycleLabel(s.cycleMonths || 1)}</span>
       <span class="amount">$${(s.amount||0).toFixed(2)}</span>
     </div>
     <div style="display:flex;gap:8px;margin-top:12px;">
