@@ -619,6 +619,7 @@ function egpEquivalentHtml(usdAmount){
 
 /* ====== خزنة بيانات الدخول (تشفير محلي بالكامل، الباسورد مايتخزنش خالص) ====== */
 let vaultPassword = null; // في الذاكرة بس، طول ما الصفحة مفتوحة
+let vaultCheckData = null; // بصمة تحقق مشفّرة، بتتأسس أول مرة تفتح الخزنة
 let editingCredSubId = null;
 
 function randBytes(n){ return crypto.getRandomValues(new Uint8Array(n)); }
@@ -682,6 +683,7 @@ async function loadData(){
   await loadPayments();
   await loadTransactions();
   await loadWallets();
+  await loadVaultMeta();
   fetchLiveRate();
   render();
 }
@@ -794,6 +796,32 @@ async function saveWallets(){
   }catch(e){
     console.error('save wallets error', e);
     showToast('حصل خطأ في حفظ الأرصدة', true);
+  }
+}
+
+async function loadVaultMeta(){
+  if(!isConfigured()) return;
+  try{
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/vault_meta?select=*&id=eq.main`, { headers: sbHeaders() });
+    if(!res.ok) throw new Error('fetch failed: ' + res.status);
+    const rows = await res.json();
+    if(rows.length > 0) vaultCheckData = rows[0].check_data;
+  }catch(e){
+    console.error('load vault meta error', e);
+  }
+}
+
+async function saveVaultCheck(password){
+  const encoded = await encryptVaultData({ check: 'vault_ok' }, password);
+  vaultCheckData = encoded;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/vault_meta`, {
+      method: 'POST',
+      headers: sbHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify([{ id: 'main', check_data: encoded }])
+    });
+  }catch(e){
+    console.error('save vault meta error', e);
   }
 }
 
@@ -1261,17 +1289,23 @@ async function handleVaultUnlock(){
     err.style.display = 'block';
     return;
   }
-  const sample = subs.find(s => s.vaultData);
-  if(sample){
+
+  if(vaultCheckData){
+    // فيه باسورد أساسي متأسس قبل كده، لازم يتطابق معاه
     try{
-      await decryptVaultData(sample.vaultData, pass);
+      const data = await decryptVaultData(vaultCheckData, pass);
+      if(!data || data.check !== 'vault_ok') throw new Error('mismatch');
     }catch(e){
       const err = document.getElementById('vaultUnlockError');
-      err.textContent = 'الباسورد غلط، أو البيانات اتشفرت بباسورد مختلف';
+      err.textContent = 'الباسورد غلط';
       err.style.display = 'block';
       return;
     }
+  } else {
+    // أول مرة الخزنة بتتفتح في التطبيق ده خالص — الباسورد ده بقى هو الباسورد الأساسي
+    await saveVaultCheck(pass);
   }
+
   vaultPassword = pass;
   closeVaultUnlockModal();
   render();
