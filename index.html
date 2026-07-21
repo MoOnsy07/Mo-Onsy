@@ -316,6 +316,39 @@
   </div>
 </div>
 
+<div class="modal-bg" id="vaultUnlockModalBg">
+  <div class="modal">
+    <h2>🔐 فتح الخزنة</h2>
+    <p style="color:var(--muted);font-size:13px;margin:0 0 4px;">اكتب باسورد الخزنة عشان تقدر تشوف بيانات الدخول. الباسورد ده مش محفوظ في أي مكان، لو نسيته مفيش استرجاع.</p>
+    <label>باسورد الخزنة</label>
+    <input id="vault_pass_input" type="password" placeholder="••••••••">
+    <p id="vaultUnlockError" style="color:var(--red);font-size:12.5px;margin:10px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="vaultUnlockCancelBtn">إلغاء</button>
+      <button class="btn btn-primary" id="vaultUnlockBtn">فتح</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="credModalBg">
+  <div class="modal">
+    <h2 id="credModalTitle">بيانات الدخول</h2>
+    <label>الإيميل / اسم المستخدم</label>
+    <input id="cred_email" placeholder="example@email.com">
+    <label>الباسورد</label>
+    <div style="display:flex;gap:8px;">
+      <input id="cred_password" type="password" placeholder="الباسورد" style="flex:1;">
+      <button type="button" class="icon-btn" style="width:auto;padding:0 10px;" onclick="toggleCredPasswordVisibility()">👁</button>
+      <button type="button" class="icon-btn" style="width:auto;padding:0 10px;" onclick="copyCredField('cred_password')">نسخ</button>
+    </div>
+    <p id="credError" style="color:var(--red);font-size:12.5px;margin:10px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="credCancelBtn">إلغاء</button>
+      <button class="btn btn-primary" id="credSaveBtn">حفظ</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" style="position:fixed;bottom:28px;right:28px;background:#171E2E;border:1px solid #2DD4BF;color:#2DD4BF;padding:12px 18px;border-radius:10px;font-size:13.5px;display:none;z-index:60;font-family:'IBM Plex Sans Arabic',sans-serif;max-width:280px;"></div>
 
 <script>
@@ -361,7 +394,8 @@ function toRemoteShape(s){
     last_paid: s.lastPaid || null,
     cancelled: !!s.cancelled,
     renewal_date: s.renewalDate || null,
-    cycle_months: s.cycleMonths || 1
+    cycle_months: s.cycleMonths || 1,
+    vault_data: s.vaultData || null
   };
 }
 
@@ -378,7 +412,8 @@ function fromRemoteShape(r){
     lastPaid: r.last_paid,
     cancelled: !!r.cancelled,
     renewalDate: r.renewal_date || null,
-    cycleMonths: r.cycle_months || 1
+    cycleMonths: r.cycle_months || 1,
+    vaultData: r.vault_data || null
   };
 }
 
@@ -568,6 +603,57 @@ function migrateSub(s){
 
 function cycleLabel(n){
   return {1:'شهري', 3:'ربع سنوي', 6:'نصف سنوي', 12:'سنوي'}[n] || `كل ${n} شهر`;
+}
+
+/* بيرجع السعر المكافئ بالجنيه لمبلغ بالدولار، حسب سعر البنك الحالي + ١٠٪ ربح. بيرجع null لو السعر لسه متحملش */
+function egpEquivalent(usdAmount){
+  if(!liveUsdRate) return null;
+  return usdAmount * liveUsdRate * 1.10;
+}
+
+function egpEquivalentHtml(usdAmount){
+  const eq = egpEquivalent(usdAmount);
+  if(eq === null) return '';
+  return `<span style="color:var(--muted);font-size:12px;">(≈ ${eq.toFixed(2)} ج.م)</span>`;
+}
+
+/* ====== خزنة بيانات الدخول (تشفير محلي بالكامل، الباسورد مايتخزنش خالص) ====== */
+let vaultPassword = null; // في الذاكرة بس، طول ما الصفحة مفتوحة
+let editingCredSubId = null;
+
+function randBytes(n){ return crypto.getRandomValues(new Uint8Array(n)); }
+function toB64(bytes){ return btoa(String.fromCharCode(...bytes)); }
+function fromB64(b64){ return Uint8Array.from(atob(b64), c => c.charCodeAt(0)); }
+
+async function deriveVaultKey(password, saltBytes){
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: saltBytes, iterations: 150000, hash: 'SHA-256' },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function encryptVaultData(obj, password){
+  const salt = randBytes(16);
+  const iv = randBytes(12);
+  const key = await deriveVaultKey(password, salt);
+  const enc = new TextEncoder();
+  const cipherBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(JSON.stringify(obj)));
+  return JSON.stringify({ salt: toB64(salt), iv: toB64(iv), data: toB64(new Uint8Array(cipherBuf)) });
+}
+
+async function decryptVaultData(vaultStr, password){
+  const parsed = JSON.parse(vaultStr);
+  const salt = fromB64(parsed.salt);
+  const iv = fromB64(parsed.iv);
+  const key = await deriveVaultKey(password, salt);
+  const dec = new TextDecoder();
+  const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, fromB64(parsed.data));
+  return JSON.parse(dec.decode(plainBuf));
 }
 
 async function loadData(){
@@ -1070,17 +1156,17 @@ function fmtService(s){
 function contactLink(s){
   if(!s.contactValue) return null;
   if(s.contactMethod === 'messenger'){
-    return { url: `https://m.me/${encodeURIComponent(s.contactValue)}`, label: 'ماسنجر' };
+    return { url: `https://m.me/${encodeURIComponent(s.contactValue)}`, label: s.contactValue };
   }
   const num = s.contactValue.replace(/\D/g,'');
   if(!num) return null;
-  return { url: `https://wa.me/${num}`, label: 'واتساب' };
+  return { url: `https://wa.me/${num}`, label: s.contactValue };
 }
 
 function contactCellHtml(s){
   const c = contactLink(s);
   if(!c) return `<span style="color:var(--muted)">—</span>`;
-  return `<a href="${c.url}" target="_blank" rel="noopener" class="svc-tag" style="text-decoration:none;color:var(--mint);border-color:var(--mint)">${c.label} ↗</a>`;
+  return `<a href="${c.url}" target="_blank" rel="noopener" class="svc-tag" style="text-decoration:none;color:var(--mint);border-color:var(--mint);direction:ltr;display:inline-block;">${escapeHtml(c.label)}</a>`;
 }
 
 /* ====== سعر الصرف اللحظي ====== */
@@ -1137,6 +1223,127 @@ function rateBarHtml(){
     </div>
     <button class="icon-btn-sm" onclick="fetchLiveRate()">↻ تحديث</button>
   </div>`;
+}
+
+function vaultBarHtml(){
+  if(vaultPassword){
+    return `<div class="rate-bar" style="border-color:var(--mint);">
+      <div>
+        <div class="rate-val">🔓 الخزنة مفتوحة</div>
+        <div class="rate-time">تقدر تشوف وتعدّل بيانات الدخول دلوقتي</div>
+      </div>
+      <button class="icon-btn-sm" onclick="lockVault()">قفل 🔒</button>
+    </div>`;
+  }
+  return `<div class="rate-bar">
+    <div>
+      <div class="rate-val" style="color:var(--muted);">🔒 الخزنة مقفولة</div>
+      <div class="rate-time">افتحها عشان تشوف إيميلات وباسوردات الاستورات</div>
+    </div>
+    <button class="icon-btn-sm" onclick="openVaultUnlockModal()">فتح 🔓</button>
+  </div>`;
+}
+
+function openVaultUnlockModal(){
+  document.getElementById('vault_pass_input').value = '';
+  document.getElementById('vaultUnlockError').style.display = 'none';
+  document.getElementById('vaultUnlockModalBg').classList.add('open');
+}
+function closeVaultUnlockModal(){
+  document.getElementById('vaultUnlockModalBg').classList.remove('open');
+}
+
+async function handleVaultUnlock(){
+  const pass = document.getElementById('vault_pass_input').value;
+  if(!pass){
+    const err = document.getElementById('vaultUnlockError');
+    err.textContent = 'اكتب الباسورد الأول';
+    err.style.display = 'block';
+    return;
+  }
+  const sample = subs.find(s => s.vaultData);
+  if(sample){
+    try{
+      await decryptVaultData(sample.vaultData, pass);
+    }catch(e){
+      const err = document.getElementById('vaultUnlockError');
+      err.textContent = 'الباسورد غلط، أو البيانات اتشفرت بباسورد مختلف';
+      err.style.display = 'block';
+      return;
+    }
+  }
+  vaultPassword = pass;
+  closeVaultUnlockModal();
+  render();
+  showToast('اتفتحت الخزنة 🔓');
+}
+
+function lockVault(){
+  vaultPassword = null;
+  render();
+  showToast('اتقفلت الخزنة 🔒');
+}
+
+async function openCredModal(sub){
+  if(!vaultPassword){
+    showToast('افتح الخزنة الأول', true);
+    openVaultUnlockModal();
+    return;
+  }
+  editingCredSubId = sub.id;
+  document.getElementById('credModalTitle').textContent = 'بيانات دخول: ' + sub.store;
+  document.getElementById('cred_email').value = '';
+  document.getElementById('cred_password').value = '';
+  document.getElementById('cred_password').type = 'password';
+  document.getElementById('credError').style.display = 'none';
+
+  if(sub.vaultData){
+    try{
+      const data = await decryptVaultData(sub.vaultData, vaultPassword);
+      document.getElementById('cred_email').value = data.email || '';
+      document.getElementById('cred_password').value = data.password || '';
+    }catch(e){
+      const err = document.getElementById('credError');
+      err.textContent = 'مقدرش أفك تشفير البيانات دي — ممكن الباسورد اللي فتحت بيه الخزنة مختلف عن اللي اتشفرت بيه أول مرة';
+      err.style.display = 'block';
+    }
+  }
+  document.getElementById('credModalBg').classList.add('open');
+}
+function closeCredModal(){
+  document.getElementById('credModalBg').classList.remove('open');
+}
+
+function toggleCredPasswordVisibility(){
+  const input = document.getElementById('cred_password');
+  input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+async function copyCredField(id){
+  const val = document.getElementById(id).value;
+  if(!val) return;
+  try{
+    await navigator.clipboard.writeText(val);
+    showToast('اتنسخت ✓');
+  }catch(e){
+    showToast('مقدرش أنسخ، انسخها يدوي', true);
+  }
+}
+
+async function handleCredSave(){
+  if(!vaultPassword){
+    showToast('افتح الخزنة الأول', true);
+    return;
+  }
+  const email = document.getElementById('cred_email').value.trim();
+  const password = document.getElementById('cred_password').value;
+  const idx = subs.findIndex(s => s.id === editingCredSubId);
+  if(idx === -1) return;
+
+  subs[idx].vaultData = await encryptVaultData({ email, password }, vaultPassword);
+  await saveData();
+  closeCredModal();
+  showToast('اتحفظت بيانات الدخول مشفّرة ✓');
 }
 
 /* ====== حاسبة التسعير ====== */
@@ -1239,6 +1446,7 @@ function render(){
 
   let html = `<h1>لوحة إدارة الاشتراكات</h1>`;
   html += rateBarHtml();
+  html += vaultBarHtml();
   html += tabBarHtml();
 
   if(activeTab === 'subs'){
@@ -1275,7 +1483,7 @@ function renderSubsTab(){
   const sortedAll = [...withDiff].sort((a,b)=>a.diff-b.diff);
   const totalMonthly = activeSubs.reduce((sum,s)=>sum+(s.amount||0),0);
 
-  let html = `<p class="sub">${activeSubs.length} اشتراك نشط &middot; إجمالي شهري تقريبي $${totalMonthly.toFixed(2)}${cancelledSubs.length ? ' &middot; ' + cancelledSubs.length + ' ملغي' : ''}</p>
+  let html = `<p class="sub">${activeSubs.length} اشتراك نشط &middot; إجمالي شهري تقريبي $${totalMonthly.toFixed(2)} ${egpEquivalentHtml(totalMonthly)}${cancelledSubs.length ? ' &middot; ' + cancelledSubs.length + ' ملغي' : ''}</p>
 
     <div style="display:flex;gap:10px;margin-bottom:20px;">
       <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="exportData()">⬇ تصدير نسخة احتياطية</button>
@@ -1335,7 +1543,7 @@ function renderSubsTab(){
         <td>${contactCellHtml(s)}</td>
         <td>${s.renewalDate}</td>
         <td>${cycleLabel(s.cycleMonths || 1)}</td>
-        <td>$${(s.amount||0).toFixed(2)}</td>
+        <td>$${(s.amount||0).toFixed(2)} ${egpEquivalentHtml(s.amount||0)}</td>
         <td style="color:${statusColor};font-weight:600;">${statusText}</td>
         <td>${s.lastPaid ? s.lastPaid : '—'}</td>
         <td>
@@ -1345,6 +1553,7 @@ function renderSubsTab(){
               <button class="icon-btn" onclick="cancelDelete()" title="إلغاء">↩</button>
             ` : `
               <button class="icon-btn" onclick="openModal(subs.find(x=>x.id==='${s.id}'))" title="تعديل">✎</button>
+              <button class="icon-btn" onclick="openCredModal(subs.find(x=>x.id==='${s.id}'))" title="بيانات الدخول">🔑</button>
               <button class="icon-btn" onclick="cancelSub('${s.id}')" title="إلغاء الاشتراك نهائي">🚫</button>
               <button class="icon-btn" onclick="deleteSub('${s.id}')" title="حذف">✕</button>
             `}
@@ -1641,7 +1850,7 @@ function cardHtml(s, kind){
     <p class="client">${escapeHtml(s.client || '')} ${s.client ? '&middot; ' : ''}${s.service}</p>
     <div class="meta">
       <span>${s.renewalDate} &middot; ${cycleLabel(s.cycleMonths || 1)}</span>
-      <span class="amount">$${(s.amount||0).toFixed(2)}</span>
+      <span class="amount">$${(s.amount||0).toFixed(2)} ${egpEquivalentHtml(s.amount||0)}</span>
     </div>
     <div style="display:flex;gap:8px;margin-top:12px;">
       ${c ? `<a href="${c.url}" target="_blank" rel="noopener" class="btn btn-ghost" style="text-decoration:none;text-align:center;display:flex;align-items:center;justify-content:center;">راسله</a>` : ''}
@@ -1673,6 +1882,19 @@ document.getElementById('txCancelBtn').addEventListener('click', closeTxModal);
 document.getElementById('txSaveBtn').addEventListener('click', handleTxSave);
 document.getElementById('txModalBg').addEventListener('click', (e) => {
   if(e.target.id === 'txModalBg') closeTxModal();
+});
+document.getElementById('vaultUnlockCancelBtn').addEventListener('click', closeVaultUnlockModal);
+document.getElementById('vaultUnlockBtn').addEventListener('click', handleVaultUnlock);
+document.getElementById('vault_pass_input').addEventListener('keydown', (e) => {
+  if(e.key === 'Enter') handleVaultUnlock();
+});
+document.getElementById('vaultUnlockModalBg').addEventListener('click', (e) => {
+  if(e.target.id === 'vaultUnlockModalBg') closeVaultUnlockModal();
+});
+document.getElementById('credCancelBtn').addEventListener('click', closeCredModal);
+document.getElementById('credSaveBtn').addEventListener('click', handleCredSave);
+document.getElementById('credModalBg').addEventListener('click', (e) => {
+  if(e.target.id === 'credModalBg') closeCredModal();
 });
 
 /* ====== شاشة القفل ====== */
