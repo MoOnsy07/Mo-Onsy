@@ -281,7 +281,17 @@
     </select>
     <label id="p_contactValueLabel">رقم الواتساب</label>
     <input id="p_contactValue" placeholder="مثال: 201012345678">
-    <label>المبلغ المستلم</label>
+    <label>قيمة المعاملة (التكلفة الأصلية قبل ربحك)</label>
+    <div style="display:flex;gap:8px;">
+      <input id="p_costAmount" type="number" step="0.01" placeholder="مثال: 450" style="flex:1;">
+      <select id="p_costCurrency" style="width:auto;">
+        <option value="EGP">جنيه</option>
+        <option value="USD">دولار</option>
+        <option value="EUR">يورو</option>
+        <option value="GBP">إسترليني</option>
+      </select>
+    </div>
+    <label>المبلغ المستلم من العميل</label>
     <input id="p_amount" type="number" step="0.01" placeholder="مثال: 500">
     <label>العملة</label>
     <select id="p_currency">
@@ -456,7 +466,9 @@ function toRemotePaymentShape(p){
     currency: p.currency || 'EGP',
     paid_date: p.paidDate || null,
     profit: p.profit || 0,
-    received_method: p.receivedMethod || 'other'
+    received_method: p.receivedMethod || 'other',
+    cost_amount: p.costAmount || 0,
+    cost_currency: p.costCurrency || 'EGP'
   };
 }
 
@@ -471,7 +483,9 @@ function fromRemotePaymentShape(r){
     currency: r.currency,
     paidDate: r.paid_date,
     profit: r.profit || 0,
-    receivedMethod: r.received_method || 'other'
+    receivedMethod: r.received_method || 'other',
+    costAmount: r.cost_amount || 0,
+    costCurrency: r.cost_currency || 'EGP'
   };
 }
 
@@ -1054,6 +1068,8 @@ function openPaymentModal(p){
   document.getElementById('p_client').value = p ? (p.client || '') : '';
   document.getElementById('p_contactMethod').value = p ? (p.contactMethod || 'whatsapp') : 'whatsapp';
   document.getElementById('p_contactValue').value = p ? (p.contactValue || '') : '';
+  document.getElementById('p_costAmount').value = p ? (p.costAmount || '') : '';
+  document.getElementById('p_costCurrency').value = p ? (p.costCurrency || 'EGP') : 'EGP';
   document.getElementById('p_amount').value = p ? p.amount : '';
   document.getElementById('p_currency').value = p ? (p.currency || 'EGP') : 'EGP';
   document.getElementById('p_receivedMethod').value = p ? (p.receivedMethod || 'other') : 'instapay';
@@ -1068,26 +1084,33 @@ function closePaymentModal(){
 }
 
 async function autoCalcPaymentProfit(){
-  const amount = parseFloat(document.getElementById('p_amount').value) || 0;
-  const currency = document.getElementById('p_currency').value;
-  if(!amount){
-    showToast('اكتب المبلغ الأول', true);
+  const costAmount = parseFloat(document.getElementById('p_costAmount').value) || 0;
+  const costCurrency = document.getElementById('p_costCurrency').value;
+  if(!costAmount){
+    showToast('اكتب قيمة المعاملة الأول', true);
     return;
   }
-  let profit;
-  if(currency === 'EGP'){
-    profit = amount * 0.07;
+  let profit, totalEgp;
+  if(costCurrency === 'EGP'){
+    const bankFee = costAmount * 0.03;
+    profit = costAmount * 0.07;
+    if(profit < MIN_PROFIT) profit = MIN_PROFIT;
+    totalEgp = costAmount + bankFee + profit;
   } else {
-    const rate = await fetchRateFor(currency);
+    const rate = await fetchRateFor(costCurrency);
     if(!rate){
       showToast('اتعذر جلب سعر الصرف، اكتب الربح يدوي', true);
       return;
     }
-    profit = (amount * rate) * 0.10;
+    const converted = costAmount * rate;
+    profit = converted * 0.10;
+    if(profit < MIN_PROFIT) profit = MIN_PROFIT;
+    totalEgp = converted + profit;
   }
-  if(profit < MIN_PROFIT) profit = MIN_PROFIT;
   document.getElementById('p_profit').value = profit.toFixed(2);
-  showToast('اتحسب الربح تلقائي، تقدر تعدله لو حابب');
+  document.getElementById('p_amount').value = totalEgp.toFixed(2);
+  document.getElementById('p_currency').value = 'EGP';
+  showToast('اتحسب الربح والمبلغ المطلوب تلقائي، تقدر تعدلهم لو حابب');
 }
 
 function receivedMethodLabel(m){
@@ -1099,6 +1122,8 @@ async function handlePaymentSave(){
   const client = document.getElementById('p_client').value.trim();
   const contactMethod = document.getElementById('p_contactMethod').value;
   const contactValue = document.getElementById('p_contactValue').value.trim();
+  const costAmount = parseFloat(document.getElementById('p_costAmount').value) || 0;
+  const costCurrency = document.getElementById('p_costCurrency').value;
   const amount = parseFloat(document.getElementById('p_amount').value) || 0;
   const currency = document.getElementById('p_currency').value;
   const receivedMethod = document.getElementById('p_receivedMethod').value;
@@ -1116,12 +1141,12 @@ async function handlePaymentSave(){
   if(editingPaymentId){
     const idx = payments.findIndex(p => p.id === editingPaymentId);
     if(idx > -1){
-      payments[idx] = {...payments[idx], description, client, contactMethod, contactValue, amount, currency, receivedMethod, paidDate, profit};
+      payments[idx] = {...payments[idx], description, client, contactMethod, contactValue, costAmount, costCurrency, amount, currency, receivedMethod, paidDate, profit};
     }
   } else {
     payments.push({
       id: 'pay_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
-      description, client, contactMethod, contactValue, amount, currency, receivedMethod, paidDate, profit
+      description, client, contactMethod, contactValue, costAmount, costCurrency, amount, currency, receivedMethod, paidDate, profit
     });
   }
   await savePayments();
@@ -1850,13 +1875,14 @@ function renderPaymentsTab(){
     html += `<div class="empty">مفيش دفعات في الفترة دي. دوس على زرار (+) تحت عشان تضيف دفعة.</div>`;
   } else {
     html += `<table><thead><tr>
-      <th>الوصف</th><th>العميل</th><th>تواصل</th><th>المبلغ المستلم</th><th>طريقة الاستلام</th><th>الربح</th><th>التاريخ</th><th></th>
+      <th>الوصف</th><th>العميل</th><th>تواصل</th><th>قيمة المعاملة</th><th>المبلغ المستلم</th><th>طريقة الاستلام</th><th>الربح</th><th>التاريخ</th><th></th>
     </tr></thead><tbody>`;
     sorted.forEach(p => {
       html += `<tr>
         <td>${escapeHtml(p.description)}</td>
         <td>${escapeHtml(p.client || '—')}</td>
         <td>${contactCellHtml(p)}</td>
+        <td>${(p.costAmount||0).toFixed(2)} ${paymentCurrencyLabel(p.costCurrency||'EGP')}</td>
         <td>${(p.amount||0).toFixed(2)} ${paymentCurrencyLabel(p.currency)}</td>
         <td>${fmtService(receivedMethodLabel(p.receivedMethod||'other'))}</td>
         <td style="color:var(--mint);">${(p.profit||0).toFixed(2)} ج.م</td>
