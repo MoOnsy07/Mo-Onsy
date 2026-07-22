@@ -1086,31 +1086,37 @@ function closePaymentModal(){
 async function autoCalcPaymentProfit(){
   const costAmount = parseFloat(document.getElementById('p_costAmount').value) || 0;
   const costCurrency = document.getElementById('p_costCurrency').value;
-  if(!costAmount){
-    showToast('اكتب قيمة المعاملة الأول', true);
+  const amount = parseFloat(document.getElementById('p_amount').value) || 0;
+  const currency = document.getElementById('p_currency').value;
+
+  if(!costAmount || !amount){
+    showToast('اكتب قيمة المعاملة والمبلغ المستلم الأول', true);
     return;
   }
-  let profit, totalEgp;
-  if(costCurrency === 'EGP'){
-    const bankFee = costAmount * 0.03;
-    profit = costAmount * 0.07;
-    if(profit < MIN_PROFIT) profit = MIN_PROFIT;
-    totalEgp = costAmount + bankFee + profit;
-  } else {
+
+  let costEgp = costAmount;
+  if(costCurrency !== 'EGP'){
     const rate = await fetchRateFor(costCurrency);
     if(!rate){
-      showToast('اتعذر جلب سعر الصرف، اكتب الربح يدوي', true);
+      showToast('اتعذر جلب سعر الصرف لقيمة المعاملة، اكتب الربح يدوي', true);
       return;
     }
-    const converted = costAmount * rate;
-    profit = converted * 0.10;
-    if(profit < MIN_PROFIT) profit = MIN_PROFIT;
-    totalEgp = converted + profit;
+    costEgp = costAmount * rate;
   }
+
+  let receivedEgp = amount;
+  if(currency !== 'EGP'){
+    const rate2 = await fetchRateFor(currency);
+    if(!rate2){
+      showToast('اتعذر جلب سعر الصرف للمبلغ المستلم، اكتب الربح يدوي', true);
+      return;
+    }
+    receivedEgp = amount * rate2;
+  }
+
+  const profit = receivedEgp - costEgp;
   document.getElementById('p_profit').value = profit.toFixed(2);
-  document.getElementById('p_amount').value = totalEgp.toFixed(2);
-  document.getElementById('p_currency').value = 'EGP';
-  showToast('اتحسب الربح والمبلغ المطلوب تلقائي، تقدر تعدلهم لو حابب');
+  showToast('اتحسب الربح كفرق بين المستلم وقيمة المعاملة، تقدر تعدله لو حابب');
 }
 
 function receivedMethodLabel(m){
@@ -1637,8 +1643,6 @@ function tabBarHtml(){
   return `<div class="tabs">
     <button class="tab-btn ${activeTab==='subs'?'active':''}" onclick="switchTab('subs')">الاشتراكات</button>
     <button class="tab-btn ${activeTab==='payments'?'active':''}" onclick="switchTab('payments')">مدفوعات</button>
-    <button class="tab-btn ${activeTab==='calc'?'active':''}" onclick="switchTab('calc')">حاسبة التسعير</button>
-    <button class="tab-btn ${activeTab==='ledger'?'active':''}" onclick="switchTab('ledger')">الماليات</button>
   </div>`;
 }
 
@@ -1651,27 +1655,19 @@ function render(){
   html += vaultBarHtml();
   html += tabBarHtml();
 
-  if(activeTab === 'subs'){
-    fab.style.display = 'flex';
-    fab.title = 'إضافة اشتراك';
-    fab.innerHTML = '+ إضافة اشتراك';
-    fab.onclick = () => openModal(null);
-    html += renderSubsTab();
-  } else if(activeTab === 'payments'){
+  if(activeTab === 'payments'){
     fab.style.display = 'flex';
     fab.title = 'إضافة دفعة';
     fab.innerHTML = '+ إضافة دفعة';
     fab.onclick = () => openPaymentModal(null);
     html += renderPaymentsTab();
-  } else if(activeTab === 'ledger'){
-    fab.style.display = 'flex';
-    fab.title = 'إضافة معاملة';
-    fab.innerHTML = '+ إضافة معاملة';
-    fab.onclick = () => openTxModal(null);
-    html += renderLedgerTab();
   } else {
-    fab.style.display = 'none';
-    html += renderCalcTab();
+    activeTab = 'subs';
+    fab.style.display = 'flex';
+    fab.title = 'إضافة اشتراك';
+    fab.innerHTML = '+ إضافة اشتراك';
+    fab.onclick = () => openModal(null);
+    html += renderSubsTab();
   }
 
   app.innerHTML = html;
