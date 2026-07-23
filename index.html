@@ -405,6 +405,9 @@ let editingPaymentId = null;
 let editingTxId = null;
 let activeTab = 'subs';
 let paymentsMonthFilter = null;
+let paymentsSearchQuery = '';
+let paymentsDateFrom = '';
+let paymentsDateTo = '';
 let ledgerMonthFilter = null;
 
 /* ====== إعدادات قاعدة البيانات (Supabase) ======
@@ -1828,14 +1831,41 @@ function getAvailableMonths(list, dateField){
 
 function switchPaymentsMonth(val){
   paymentsMonthFilter = val === 'all' ? null : val;
+  paymentsDateFrom = '';
+  paymentsDateTo = '';
+  render();
+}
+
+function applyPaymentsFilters(){
+  paymentsSearchQuery = document.getElementById('paymentsSearchInput').value;
+  paymentsDateFrom = document.getElementById('paymentsDateFromInput').value;
+  paymentsDateTo = document.getElementById('paymentsDateToInput').value;
+  if(paymentsDateFrom || paymentsDateTo) paymentsMonthFilter = null;
+  render();
+}
+
+function resetPaymentsFilters(){
+  paymentsSearchQuery = '';
+  paymentsDateFrom = '';
+  paymentsDateTo = '';
+  paymentsMonthFilter = null;
   render();
 }
 
 function renderPaymentsTab(){
   const months = getAvailableMonths(payments, 'paidDate');
-  const filtered = paymentsMonthFilter
-    ? payments.filter(p => (p.paidDate || '').slice(0,7) === paymentsMonthFilter)
-    : payments;
+  const filtered = payments.filter(p => {
+    if(paymentsMonthFilter && (p.paidDate || '').slice(0,7) !== paymentsMonthFilter) return false;
+    if(paymentsDateFrom && (p.paidDate || '') < paymentsDateFrom) return false;
+    if(paymentsDateTo && (p.paidDate || '') > paymentsDateTo) return false;
+    if(paymentsSearchQuery){
+      const q = paymentsSearchQuery.trim().toLowerCase();
+      const matchDesc = (p.description || '').toLowerCase().includes(q);
+      const matchClient = (p.client || '').toLowerCase().includes(q);
+      if(!matchDesc && !matchClient) return false;
+    }
+    return true;
+  });
 
   const totalEgp = filtered.filter(p=>p.currency==='EGP').reduce((s,p)=>s+(p.amount||0),0);
   const totalProfit = filtered.reduce((s,p)=>s+(p.profit||0),0);
@@ -1848,6 +1878,19 @@ function renderPaymentsTab(){
   let html = `<div class="month-pills">
     <button class="month-pill ${!paymentsMonthFilter?'active':''}" onclick="switchPaymentsMonth('all')">كل الشهور</button>
     ${months.map(m => `<button class="month-pill ${paymentsMonthFilter===m?'active':''}" onclick="switchPaymentsMonth('${m}')">${monthLabel(m)}</button>`).join('')}
+  </div>`;
+
+  html += `<div class="calc-card" style="margin-bottom:16px;padding:14px 16px;">
+    <label style="margin-top:0;">🔍 دور باسم الخدمة أو العميل</label>
+    <input id="paymentsSearchInput" placeholder="مثال: Shopify أو اسم العميل" value="${escapeHtml(paymentsSearchQuery)}" onkeydown="if(event.key==='Enter') applyPaymentsFilters()">
+    <div class="calc-row" style="margin-top:10px;">
+      <div><label style="margin-top:0;">من تاريخ</label><input id="paymentsDateFromInput" type="date" value="${paymentsDateFrom}"></div>
+      <div><label style="margin-top:0;">لحد تاريخ</label><input id="paymentsDateToInput" type="date" value="${paymentsDateTo}"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button class="btn btn-primary" style="flex:1;" onclick="applyPaymentsFilters()">تطبيق</button>
+      <button class="btn btn-ghost" style="flex:none;padding:0 16px;" onclick="resetPaymentsFilters()">مسح الفلاتر</button>
+    </div>
   </div>`;
 
   html += `<div class="cards" style="margin-bottom:14px;">
@@ -1872,7 +1915,10 @@ function renderPaymentsTab(){
     </div>`).join('')}
   </div>`;
 
-  html += `<div class="section-title">${paymentsMonthFilter ? 'دفعات ' + monthLabel(paymentsMonthFilter) : 'كل المدفوعات'} <span class="count-pill">${filtered.length}</span></div>`;
+  let sectionTitle = 'كل المدفوعات';
+  if(paymentsMonthFilter) sectionTitle = 'دفعات ' + monthLabel(paymentsMonthFilter);
+  else if(paymentsDateFrom || paymentsDateTo || paymentsSearchQuery) sectionTitle = 'نتائج الفلترة';
+  html += `<div class="section-title">${sectionTitle} <span class="count-pill">${filtered.length}</span></div>`;
   if(filtered.length === 0){
     html += `<div class="empty">مفيش دفعات في الفترة دي. دوس على زرار (+) تحت عشان تضيف دفعة.</div>`;
   } else {
