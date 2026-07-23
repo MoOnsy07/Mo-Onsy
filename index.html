@@ -390,6 +390,16 @@
   </div>
 </div>
 
+<div class="modal-bg" id="clientModalBg">
+  <div class="modal" style="max-width:520px;max-height:85vh;overflow-y:auto;">
+    <h2 id="clientModalTitle">بيانات العميل</h2>
+    <div id="clientModalBody"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="clientCloseBtn" style="flex:1;">إغلاق</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" style="position:fixed;bottom:28px;right:28px;background:#171E2E;border:1px solid #2DD4BF;color:#2DD4BF;padding:12px 18px;border-radius:10px;font-size:13.5px;display:none;z-index:60;font-family:'IBM Plex Sans Arabic',sans-serif;max-width:280px;"></div>
 
 <script>
@@ -408,6 +418,8 @@ let paymentsMonthFilter = null;
 let paymentsSearchQuery = '';
 let paymentsDateFrom = '';
 let paymentsDateTo = '';
+let clientsSearchQuery = '';
+let openClientKey = null;
 let ledgerMonthFilter = null;
 
 /* ====== إعدادات قاعدة البيانات (Supabase) ======
@@ -1652,6 +1664,7 @@ function tabBarHtml(){
   return `<div class="tabs">
     <button class="tab-btn ${activeTab==='subs'?'active':''}" onclick="switchTab('subs')">الاشتراكات</button>
     <button class="tab-btn ${activeTab==='payments'?'active':''}" onclick="switchTab('payments')">مدفوعات</button>
+    <button class="tab-btn ${activeTab==='clients'?'active':''}" onclick="switchTab('clients')">العملاء</button>
   </div>`;
 }
 
@@ -1670,6 +1683,9 @@ function render(){
     fab.innerHTML = '+ إضافة دفعة';
     fab.onclick = () => openPaymentModal(null);
     html += renderPaymentsTab();
+  } else if(activeTab === 'clients'){
+    fab.style.display = 'none';
+    html += renderClientsTab();
   } else {
     activeTab = 'subs';
     fab.style.display = 'flex';
@@ -1850,6 +1866,140 @@ function resetPaymentsFilters(){
   paymentsDateTo = '';
   paymentsMonthFilter = null;
   render();
+}
+
+/* ====== العملاء (مجمّعة تلقائيًا من الاشتراكات والمدفوعات) ====== */
+function clientKeyFor(contactValue, name){
+  if(contactValue && contactValue.trim()) return 'c:' + contactValue.trim().toLowerCase();
+  if(name && name.trim()) return 'n:' + name.trim().toLowerCase();
+  return null;
+}
+
+function buildClientsMap(){
+  const map = {};
+  function ensure(key, name, contactMethod, contactValue){
+    if(!map[key]){
+      map[key] = { key, displayName: name || 'عميل بدون اسم', contactMethod, contactValue, subs: [], payments: [] };
+    }
+    if(!map[key].displayName || map[key].displayName === 'عميل بدون اسم'){
+      if(name) map[key].displayName = name;
+    }
+    if(!map[key].contactValue && contactValue){
+      map[key].contactValue = contactValue;
+      map[key].contactMethod = contactMethod;
+    }
+  }
+  subs.forEach(s => {
+    const key = clientKeyFor(s.contactValue, s.client || s.store);
+    if(!key) return;
+    ensure(key, s.client || s.store, s.contactMethod, s.contactValue);
+    map[key].subs.push(s);
+  });
+  payments.forEach(p => {
+    const key = clientKeyFor(p.contactValue, p.client || p.description);
+    if(!key) return;
+    ensure(key, p.client || p.description, p.contactMethod, p.contactValue);
+    map[key].payments.push(p);
+  });
+  return Object.values(map);
+}
+
+function switchClientsSearch(val){
+  clientsSearchQuery = val;
+  render();
+}
+
+function renderClientsTab(){
+  const clients = buildClientsMap();
+  const q = clientsSearchQuery.trim().toLowerCase();
+  const filtered = q
+    ? clients.filter(c => c.displayName.toLowerCase().includes(q) || (c.contactValue||'').toLowerCase().includes(q))
+    : clients;
+
+  filtered.sort((a,b) => {
+    const totalA = a.payments.reduce((s,p)=>s+(p.currency==='EGP'?p.amount||0:0),0);
+    const totalB = b.payments.reduce((s,p)=>s+(p.currency==='EGP'?p.amount||0:0),0);
+    return totalB - totalA;
+  });
+
+  let html = `<p class="sub">${clients.length} عميل، مجمّعين تلقائيًا من الاشتراكات والمدفوعات</p>`;
+
+  html += `<div class="calc-card" style="margin-bottom:18px;padding:14px 16px;">
+    <label style="margin-top:0;">🔍 دور باسم العميل أو رقمه</label>
+    <input id="clientsSearchInput" value="${escapeHtml(clientsSearchQuery)}" placeholder="مثال: أحمد أو رقم الواتساب"
+      onkeydown="if(event.key==='Enter') switchClientsSearch(this.value)">
+    <button class="btn btn-ghost" style="width:100%;margin-top:10px;" onclick="switchClientsSearch(document.getElementById('clientsSearchInput').value)">بحث</button>
+  </div>`;
+
+  if(filtered.length === 0){
+    html += `<div class="empty">مفيش عملاء ليهم بيانات تواصل مسجّلة لسه. ضيف رقم واتساب أو ماسنجر للعميل من الاشتراك أو الدفعة عشان يظهر هنا.</div>`;
+  } else {
+    html += `<div class="cards">`;
+    filtered.forEach(c => {
+      const activeSubsCount = c.subs.filter(s => !s.cancelled).length;
+      const paymentsTotalEgp = c.payments.filter(p=>p.currency==='EGP').reduce((s,p)=>s+(p.amount||0),0);
+      html += `<div class="card" style="cursor:pointer;" onclick="openClientModal('${c.key}')">
+        <p class="store">${escapeHtml(c.displayName)}</p>
+        <p class="client" style="margin-bottom:10px;">${c.contactValue ? escapeHtml(c.contactValue) : 'مفيش رقم تواصل'}</p>
+        <div class="meta">
+          <span>${activeSubsCount} اشتراك نشط &middot; ${c.payments.length} دفعة</span>
+          <span class="amount">${paymentsTotalEgp.toFixed(0)} ج.م</span>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+  return html;
+}
+
+function openClientModal(key){
+  const clients = buildClientsMap();
+  const c = clients.find(x => x.key === key);
+  if(!c) return;
+  openClientKey = key;
+
+  document.getElementById('clientModalTitle').textContent = c.displayName;
+
+  const activeSubsCount = c.subs.filter(s => !s.cancelled).length;
+  const cancelledCount = c.subs.filter(s => s.cancelled).length;
+  const subsTotalUsd = c.subs.filter(s => !s.cancelled).reduce((s,x)=>s+(x.amount||0),0);
+  const paymentsTotalEgp = c.payments.filter(p=>p.currency==='EGP').reduce((s,p)=>s+(p.amount||0),0);
+  const profitTotalEgp = c.payments.reduce((s,p)=>s+(p.profit||0),0);
+  const contact = c.contactValue ? contactLink({contactMethod:c.contactMethod, contactValue:c.contactValue}) : null;
+
+  let body = `<div class="result-box" style="margin-top:0;">
+    <div class="result-line"><span>وسيلة التواصل</span><span>${contact ? `<a href="${contact.url}" target="_blank" rel="noopener" style="color:var(--mint);direction:ltr;display:inline-block;">${escapeHtml(c.contactValue)}</a>` : '—'}</span></div>
+    <div class="result-line"><span>اشتراكات نشطة</span><span>${activeSubsCount}${cancelledCount ? ' (+' + cancelledCount + ' ملغي)' : ''}</span></div>
+    <div class="result-line"><span>إجمالي الاشتراكات النشطة</span><span>$${subsTotalUsd.toFixed(2)}</span></div>
+    <div class="result-line"><span>إجمالي المدفوعات (جنيه)</span><span>${paymentsTotalEgp.toFixed(2)} ج.م</span></div>
+    <div class="result-line total" style="border-top:none;"><span>إجمالي الربح منه</span><span style="color:var(--mint);">${profitTotalEgp.toFixed(2)} ج.م</span></div>
+  </div>`;
+
+  if(c.subs.length > 0){
+    body += `<p style="font-family:'Cairo',sans-serif;font-weight:700;font-size:14.5px;margin:18px 0 8px;">الاشتراكات</p>`;
+    [...c.subs].sort((a,b)=> (a.cancelled?1:0) - (b.cancelled?1:0)).forEach(s => {
+      body += `<div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:9px 12px;margin-bottom:6px;font-size:13px;${s.cancelled?'opacity:0.5;':''}">
+        <span>${escapeHtml(s.store)} <span style="color:var(--muted);">(${fmtService(s.service)})</span></span>
+        <span>${s.cancelled ? 'ملغي' : '$'+(s.amount||0).toFixed(2)+' &middot; '+cycleLabel(s.cycleMonths||1)}</span>
+      </div>`;
+    });
+  }
+
+  if(c.payments.length > 0){
+    body += `<p style="font-family:'Cairo',sans-serif;font-weight:700;font-size:14.5px;margin:18px 0 8px;">المدفوعات السابقة</p>`;
+    [...c.payments].sort((a,b)=> (b.paidDate||'').localeCompare(a.paidDate||'')).forEach(p => {
+      body += `<div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:9px 12px;margin-bottom:6px;font-size:13px;">
+        <span>${escapeHtml(p.description)} <span style="color:var(--muted);">${p.paidDate||''}</span></span>
+        <span>${(p.amount||0).toFixed(2)} ${paymentCurrencyLabel(p.currency)}</span>
+      </div>`;
+    });
+  }
+
+  document.getElementById('clientModalBody').innerHTML = body;
+  document.getElementById('clientModalBg').classList.add('open');
+}
+function closeClientModal(){
+  document.getElementById('clientModalBg').classList.remove('open');
 }
 
 function renderPaymentsTab(){
@@ -2180,6 +2330,10 @@ document.getElementById('credCancelBtn').addEventListener('click', closeCredModa
 document.getElementById('credSaveBtn').addEventListener('click', handleCredSave);
 document.getElementById('credModalBg').addEventListener('click', (e) => {
   if(e.target.id === 'credModalBg') closeCredModal();
+});
+document.getElementById('clientCloseBtn').addEventListener('click', closeClientModal);
+document.getElementById('clientModalBg').addEventListener('click', (e) => {
+  if(e.target.id === 'clientModalBg') closeClientModal();
 });
 
 /* ====== شاشة القفل ====== */
