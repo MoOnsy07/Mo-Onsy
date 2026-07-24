@@ -458,6 +458,7 @@ let invoices = [];
 let editingInvoiceId = null;
 let pendingDeleteInvoiceId = null;
 let payConfirmSubId = null;
+let invoicesSearchQuery = '';
 let editingPaymentId = null;
 let editingTxId = null;
 let activeTab = 'subs';
@@ -2250,45 +2251,89 @@ function invoiceStatusInfo(status){
   }[status] || { text: status, color: 'var(--muted)', bg: 'var(--surface-2)' };
 }
 
-function renderInvoicesTab(){
-  const pending = invoices.filter(i => i.status === 'pending');
-  const totalPending = pending.reduce((s,i)=>s+(i.amount||0),0);
+function switchInvoicesSearch(val){
+  invoicesSearchQuery = val;
+  render();
+}
 
-  let html = `<p class="sub">مرجع فواتير مستقل — ${invoices.length} فاتورة، ${pending.length} لسه قيد الانتظار (${totalPending.toFixed(2)})</p>`;
+function invoiceCardHtml(inv){
+  const st = invoiceStatusInfo(inv.status);
+  return `<div class="card" style="cursor:default;${inv.status!=='pending'?'opacity:0.6;':''}">
+    <span class="badge" style="background:${st.bg};color:${st.color};">${st.text}</span>
+    <p class="store">${escapeHtml(inv.description)}</p>
+    ${inv.number ? `<p class="client">رقم: ${escapeHtml(inv.number)}</p>` : ''}
+    <div class="meta" style="margin-top:6px;">
+      <span class="amount" style="font-size:18px;">${(inv.amount||0).toFixed(2)}</span>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+      ${inv.status === 'pending' ? `
+        <button class="pay-btn" style="margin-top:0;flex:1;" onclick="setInvoiceStatus('${inv.id}','paid')">دفع ✓</button>
+        <button class="btn btn-ghost" style="flex:1;padding:8px;" onclick="setInvoiceStatus('${inv.id}','cancelled')">إلغاء</button>
+      ` : `
+        <button class="btn btn-ghost" style="flex:1;padding:8px;font-size:12.5px;" onclick="setInvoiceStatus('${inv.id}','pending')">↺ رجّعها قيد الانتظار</button>
+      `}
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button class="btn btn-ghost" style="flex:1;padding:6px;font-size:12px;" onclick="openInvoiceModal(invoices.find(x=>x.id==='${inv.id}'))">تعديل</button>
+      ${pendingDeleteInvoiceId === inv.id ? `
+        <button class="btn" style="flex:1;padding:6px;font-size:12px;background:var(--red-dim);color:var(--red);" onclick="deleteInvoice('${inv.id}')">تأكيد الحذف</button>
+        <button class="btn btn-ghost" style="flex:none;padding:6px 10px;font-size:12px;" onclick="cancelDeleteInvoice()">↩</button>
+      ` : `<button class="btn btn-ghost" style="flex:1;padding:6px;font-size:12px;" onclick="deleteInvoice('${inv.id}')">حذف</button>`}
+    </div>
+  </div>`;
+}
+
+function renderInvoicesTab(){
+  const q = invoicesSearchQuery.trim().toLowerCase();
+  const filtered = q
+    ? invoices.filter(i => (i.number||'').toLowerCase().includes(q) || (i.description||'').toLowerCase().includes(q))
+    : invoices;
+
+  const pending = filtered.filter(i => i.status === 'pending');
+  const paid = filtered.filter(i => i.status === 'paid');
+  const cancelled = filtered.filter(i => i.status === 'cancelled');
+  const totalPending = pending.reduce((s,i)=>s+(i.amount||0),0);
+  const totalPaid = paid.reduce((s,i)=>s+(i.amount||0),0);
+
+  let html = `<p class="sub">مرجع فواتير مستقل — ${invoices.length} فاتورة إجمالًا</p>`;
+
+  html += `<div class="calc-card" style="margin-bottom:18px;padding:14px 16px;">
+    <label style="margin-top:0;">🔍 دور برقم الفاتورة أو الوصف</label>
+    <input id="invoicesSearchInput" value="${escapeHtml(invoicesSearchQuery)}" placeholder="مثال: 1001"
+      onkeydown="if(event.key==='Enter') switchInvoicesSearch(this.value)">
+    <button class="btn btn-ghost" style="width:100%;margin-top:10px;" onclick="switchInvoicesSearch(document.getElementById('invoicesSearchInput').value)">بحث</button>
+  </div>`;
 
   if(invoices.length === 0){
     html += `<div class="empty">لسه معملتش فواتير. دوس على زرار (+) تحت عشان تضيف أول فاتورة.</div>`;
-  } else {
-    const sorted = [...invoices].sort((a,b) => (a.status==='pending'?0:1) - (b.status==='pending'?0:1));
-    html += `<div class="cards">`;
-    sorted.forEach(inv => {
-      const st = invoiceStatusInfo(inv.status);
-      html += `<div class="card" style="cursor:default;${inv.status!=='pending'?'opacity:0.6;':''}">
-        <span class="badge" style="background:${st.bg};color:${st.color};">${st.text}</span>
-        <p class="store">${escapeHtml(inv.description)}</p>
-        ${inv.number ? `<p class="client">رقم: ${escapeHtml(inv.number)}</p>` : ''}
-        <div class="meta" style="margin-top:6px;">
-          <span class="amount" style="font-size:18px;">${(inv.amount||0).toFixed(2)}</span>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
-          ${inv.status === 'pending' ? `
-            <button class="pay-btn" style="margin-top:0;flex:1;" onclick="setInvoiceStatus('${inv.id}','paid')">دفع ✓</button>
-            <button class="btn btn-ghost" style="flex:1;padding:8px;" onclick="setInvoiceStatus('${inv.id}','cancelled')">إلغاء</button>
-          ` : `
-            <button class="btn btn-ghost" style="flex:1;padding:8px;font-size:12.5px;" onclick="setInvoiceStatus('${inv.id}','pending')">↺ رجّعها قيد الانتظار</button>
-          `}
-        </div>
-        <div style="display:flex;gap:8px;margin-top:8px;">
-          <button class="btn btn-ghost" style="flex:1;padding:6px;font-size:12px;" onclick="openInvoiceModal(invoices.find(x=>x.id==='${inv.id}'))">تعديل</button>
-          ${pendingDeleteInvoiceId === inv.id ? `
-            <button class="btn" style="flex:1;padding:6px;font-size:12px;background:var(--red-dim);color:var(--red);" onclick="deleteInvoice('${inv.id}')">تأكيد الحذف</button>
-            <button class="btn btn-ghost" style="flex:none;padding:6px 10px;font-size:12px;" onclick="cancelDeleteInvoice()">↩</button>
-          ` : `<button class="btn btn-ghost" style="flex:1;padding:6px;font-size:12px;" onclick="deleteInvoice('${inv.id}')">حذف</button>`}
-        </div>
-      </div>`;
-    });
-    html += `</div>`;
+    return html;
   }
+  if(filtered.length === 0){
+    html += `<div class="empty">مفيش فواتير مطابقة للبحث.</div>`;
+    return html;
+  }
+
+  html += `<div class="section-title" style="color:var(--amber);">⏳ قيد الانتظار <span class="count-pill" style="background:var(--amber-dim);color:var(--amber);">${pending.length}</span></div>`;
+  if(pending.length === 0){
+    html += `<div class="empty">مفيش فواتير قيد الانتظار.</div>`;
+  } else {
+    html += `<p style="color:var(--muted);font-size:12.5px;margin:-8px 0 10px;">إجمالي: ${totalPending.toFixed(2)}</p>`;
+    html += `<div class="cards">${pending.map(invoiceCardHtml).join('')}</div>`;
+  }
+
+  html += `<div class="section-title" style="color:var(--mint);margin-top:26px;">✓ مدفوعة <span class="count-pill">${paid.length}</span></div>`;
+  if(paid.length === 0){
+    html += `<div class="empty">لسه مفيش فواتير مدفوعة.</div>`;
+  } else {
+    html += `<p style="color:var(--muted);font-size:12.5px;margin:-8px 0 10px;">إجمالي: ${totalPaid.toFixed(2)}</p>`;
+    html += `<div class="cards">${paid.map(invoiceCardHtml).join('')}</div>`;
+  }
+
+  if(cancelled.length > 0){
+    html += `<div class="section-title" style="color:var(--muted);margin-top:26px;">ملغاة <span class="count-pill" style="background:var(--surface-2);color:var(--muted);">${cancelled.length}</span></div>`;
+    html += `<div class="cards">${cancelled.map(invoiceCardHtml).join('')}</div>`;
+  }
+
   return html;
 }
 
