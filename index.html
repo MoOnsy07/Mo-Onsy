@@ -265,6 +265,8 @@
     </select>
     <label>المبلغ (بالدولار)</label>
     <input id="f_amount" type="number" step="0.01" placeholder="مثال: 39">
+    <label>ملاحظة (اختياري)</label>
+    <textarea id="f_notes" rows="2" placeholder="مثال: اتفقنا يدفع يوم 25، أو العميل بيتأخر عادة" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:10px 11px;border-radius:9px;font-size:14px;font-family:inherit;resize:vertical;"></textarea>
     <p id="formError" style="color:var(--red);font-size:12.5px;margin:14px 0 0;display:none;"></p>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="cancelBtn">إلغاء</button>
@@ -454,7 +456,8 @@ function toRemoteShape(s){
     cancelled: !!s.cancelled,
     renewal_date: s.renewalDate || null,
     cycle_months: s.cycleMonths || 1,
-    vault_data: s.vaultData || null
+    vault_data: s.vaultData || null,
+    notes: s.notes || null
   };
 }
 
@@ -472,7 +475,8 @@ function fromRemoteShape(r){
     cancelled: !!r.cancelled,
     renewalDate: r.renewal_date || null,
     cycleMonths: r.cycle_months || 1,
-    vaultData: r.vault_data || null
+    vaultData: r.vault_data || null,
+    notes: r.notes || ''
   };
 }
 
@@ -992,6 +996,7 @@ function openModal(sub){
   document.getElementById('f_amount').value = sub ? sub.amount : '';
   document.getElementById('f_contactMethod').value = sub ? (sub.contactMethod || 'whatsapp') : 'whatsapp';
   document.getElementById('f_contactValue').value = sub ? (sub.contactValue || '') : '';
+  document.getElementById('f_notes').value = sub ? (sub.notes || '') : '';
   updateContactLabel();
   document.getElementById('formError').style.display = 'none';
   document.getElementById('modalBg').classList.add('open');
@@ -1009,6 +1014,7 @@ async function handleSave(){
   const amount = parseFloat(document.getElementById('f_amount').value) || 0;
   const contactMethod = document.getElementById('f_contactMethod').value;
   const contactValue = document.getElementById('f_contactValue').value.trim();
+  const notes = document.getElementById('f_notes').value.trim();
 
   const errEl = document.getElementById('formError');
   if(!store || !renewalDate){
@@ -1021,12 +1027,12 @@ async function handleSave(){
   if(editingId){
     const idx = subs.findIndex(s => s.id === editingId);
     if(idx > -1){
-      subs[idx] = {...subs[idx], store, client, service, renewalDate, cycleMonths, amount, contactMethod, contactValue};
+      subs[idx] = {...subs[idx], store, client, service, renewalDate, cycleMonths, amount, contactMethod, contactValue, notes};
     }
   } else {
     subs.push({
       id: 'sub_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
-      store, client, service, renewalDate, cycleMonths, amount, contactMethod, contactValue,
+      store, client, service, renewalDate, cycleMonths, amount, contactMethod, contactValue, notes,
       lastPaid: null
     });
   }
@@ -1869,34 +1875,33 @@ function resetPaymentsFilters(){
 }
 
 /* ====== العملاء (مجمّعة تلقائيًا من الاشتراكات والمدفوعات) ====== */
-function clientKeyFor(contactValue, name){
-  if(contactValue && contactValue.trim()) return 'c:' + contactValue.trim().toLowerCase();
-  if(name && name.trim()) return 'n:' + name.trim().toLowerCase();
-  return null;
+function clientKeyFor(contactMethod, contactValue){
+  if(!contactValue || !contactValue.trim()) return null;
+  if(contactMethod === 'whatsapp'){
+    const digits = contactValue.replace(/\D/g, '');
+    return digits ? 'wa:' + digits : null;
+  }
+  return 'ms:' + contactValue.trim().toLowerCase();
 }
 
 function buildClientsMap(){
   const map = {};
   function ensure(key, name, contactMethod, contactValue){
     if(!map[key]){
-      map[key] = { key, displayName: name || 'عميل بدون اسم', contactMethod, contactValue, subs: [], payments: [] };
+      map[key] = { key, displayName: name || contactValue, contactMethod, contactValue, subs: [], payments: [] };
     }
-    if(!map[key].displayName || map[key].displayName === 'عميل بدون اسم'){
-      if(name) map[key].displayName = name;
-    }
-    if(!map[key].contactValue && contactValue){
-      map[key].contactValue = contactValue;
-      map[key].contactMethod = contactMethod;
+    if((!map[key].displayName || map[key].displayName === map[key].contactValue) && name){
+      map[key].displayName = name;
     }
   }
   subs.forEach(s => {
-    const key = clientKeyFor(s.contactValue, s.client || s.store);
+    const key = clientKeyFor(s.contactMethod, s.contactValue);
     if(!key) return;
     ensure(key, s.client || s.store, s.contactMethod, s.contactValue);
     map[key].subs.push(s);
   });
   payments.forEach(p => {
-    const key = clientKeyFor(p.contactValue, p.client || p.description);
+    const key = clientKeyFor(p.contactMethod, p.contactValue);
     if(!key) return;
     ensure(key, p.client || p.description, p.contactMethod, p.contactValue);
     map[key].payments.push(p);
@@ -2287,6 +2292,7 @@ function cardHtml(s, kind){
       <span>${s.renewalDate} &middot; ${cycleLabel(s.cycleMonths || 1)}</span>
       <span class="amount">$${(s.amount||0).toFixed(2)} ${egpEquivalentHtml(s.amount||0)}</span>
     </div>
+    ${s.notes ? `<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-top:10px;font-size:12.5px;color:var(--amber);line-height:1.6;">📝 ${escapeHtml(s.notes)}</div>` : ''}
     <div style="display:flex;gap:8px;margin-top:12px;">
       ${c ? `<a href="${c.url}" target="_blank" rel="noopener" class="btn btn-ghost" style="text-decoration:none;text-align:center;display:flex;align-items:center;justify-content:center;">راسله</a>` : ''}
       ${paidToday
