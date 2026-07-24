@@ -1886,24 +1886,21 @@ function clientKeyFor(contactMethod, contactValue){
 
 function buildClientsMap(){
   const map = {};
-  function ensure(key, name, contactMethod, contactValue){
+  function ensure(key, contactMethod, contactValue){
     if(!map[key]){
-      map[key] = { key, displayName: name || contactValue, contactMethod, contactValue, subs: [], payments: [] };
-    }
-    if((!map[key].displayName || map[key].displayName === map[key].contactValue) && name){
-      map[key].displayName = name;
+      map[key] = { key, contactMethod, contactValue, subs: [], payments: [] };
     }
   }
   subs.forEach(s => {
     const key = clientKeyFor(s.contactMethod, s.contactValue);
     if(!key) return;
-    ensure(key, s.client, s.contactMethod, s.contactValue);
+    ensure(key, s.contactMethod, s.contactValue);
     map[key].subs.push(s);
   });
   payments.forEach(p => {
     const key = clientKeyFor(p.contactMethod, p.contactValue);
     if(!key) return;
-    ensure(key, p.client, p.contactMethod, p.contactValue);
+    ensure(key, p.contactMethod, p.contactValue);
     map[key].payments.push(p);
   });
   return Object.values(map);
@@ -1918,7 +1915,7 @@ function renderClientsTab(){
   const clients = buildClientsMap();
   const q = clientsSearchQuery.trim().toLowerCase();
   const filtered = q
-    ? clients.filter(c => c.displayName.toLowerCase().includes(q) || (c.contactValue||'').toLowerCase().includes(q))
+    ? clients.filter(c => (c.contactValue||'').toLowerCase().includes(q))
     : clients;
 
   filtered.sort((a,b) => {
@@ -1927,11 +1924,11 @@ function renderClientsTab(){
     return totalB - totalA;
   });
 
-  let html = `<p class="sub">${clients.length} عميل، مجمّعين تلقائيًا من الاشتراكات والمدفوعات</p>`;
+  let html = `<p class="sub">${clients.length} عميل، مجمّعين تلقائيًا حسب رقم التواصل بس</p>`;
 
   html += `<div class="calc-card" style="margin-bottom:18px;padding:14px 16px;">
-    <label style="margin-top:0;">🔍 دور باسم العميل أو رقمه</label>
-    <input id="clientsSearchInput" value="${escapeHtml(clientsSearchQuery)}" placeholder="مثال: أحمد أو رقم الواتساب"
+    <label style="margin-top:0;">🔍 دور برقم الواتساب أو اسم الماسنجر</label>
+    <input id="clientsSearchInput" value="${escapeHtml(clientsSearchQuery)}" placeholder="مثال: 0101... أو اسم أكونت الماسنجر"
       onkeydown="if(event.key==='Enter') switchClientsSearch(this.value)">
     <button class="btn btn-ghost" style="width:100%;margin-top:10px;" onclick="switchClientsSearch(document.getElementById('clientsSearchInput').value)">بحث</button>
   </div>`;
@@ -1944,8 +1941,8 @@ function renderClientsTab(){
       const activeSubsCount = c.subs.filter(s => !s.cancelled).length;
       const paymentsTotalEgp = c.payments.filter(p=>p.currency==='EGP').reduce((s,p)=>s+(p.amount||0),0);
       html += `<div class="card" style="cursor:pointer;" onclick="openClientModal('${c.key}')">
-        <p class="store">${escapeHtml(c.displayName)}</p>
-        <p class="client" style="margin-bottom:10px;">${c.contactValue ? escapeHtml(c.contactValue) : 'مفيش رقم تواصل'}</p>
+        <p class="store" style="direction:ltr;text-align:right;">${escapeHtml(c.contactValue)}</p>
+        <p class="client" style="margin-bottom:10px;">${c.contactMethod === 'messenger' ? 'ماسنجر' : 'واتساب'}</p>
         <div class="meta">
           <span>${activeSubsCount} اشتراك نشط &middot; ${c.payments.length} دفعة</span>
           <span class="amount">${paymentsTotalEgp.toFixed(0)} ج.م</span>
@@ -1963,7 +1960,7 @@ function openClientModal(key){
   if(!c) return;
   openClientKey = key;
 
-  document.getElementById('clientModalTitle').textContent = c.displayName;
+  document.getElementById('clientModalTitle').textContent = c.contactValue;
 
   const activeSubsCount = c.subs.filter(s => !s.cancelled).length;
   const cancelledCount = c.subs.filter(s => s.cancelled).length;
