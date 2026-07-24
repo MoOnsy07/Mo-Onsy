@@ -419,6 +419,29 @@
   </div>
 </div>
 
+<div class="modal-bg" id="payConfirmModalBg">
+  <div class="modal">
+    <h2 id="payConfirmTitle">تسجيل الدفع</h2>
+    <p style="color:var(--muted);font-size:13px;margin:0 0 14px;">هيتسجل الاشتراك كمدفوع، وهتتضاف دفعة جديدة تلقائي في تبويب المدفوعات بنفس البيانات دي.</p>
+    <label>المبلغ اللي دفعته (التكلفة)</label>
+    <input id="pc_cost" type="number" step="0.01" placeholder="مثال: 450">
+    <label>المبلغ اللي العميل بعتلك</label>
+    <input id="pc_received" type="number" step="0.01" placeholder="مثال: 500">
+    <label>طريقة الاستلام</label>
+    <select id="pc_receivedMethod">
+      <option value="instapay">إنستاباي</option>
+      <option value="vodafone_cash">فودافون كاش</option>
+      <option value="etisalat_cash">اتصالات كاش</option>
+      <option value="other">أخرى</option>
+    </select>
+    <p id="payConfirmError" style="color:var(--red);font-size:12.5px;margin:10px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="payConfirmCancelBtn">إلغاء</button>
+      <button class="btn btn-primary" id="payConfirmBtn">تأكيد الدفع</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" style="position:fixed;bottom:28px;right:28px;background:#171E2E;border:1px solid #2DD4BF;color:#2DD4BF;padding:12px 18px;border-radius:10px;font-size:13.5px;display:none;z-index:60;font-family:'IBM Plex Sans Arabic',sans-serif;max-width:280px;"></div>
 
 <script>
@@ -434,6 +457,7 @@ let noteEditingId = null;
 let invoices = [];
 let editingInvoiceId = null;
 let pendingDeleteInvoiceId = null;
+let payConfirmSubId = null;
 let editingPaymentId = null;
 let editingTxId = null;
 let activeTab = 'subs';
@@ -1122,6 +1146,66 @@ async function markPaid(id){
     render();
     showToast('تم تسجيل الدفع ✓');
   }
+}
+
+function openPayConfirmModal(subId){
+  const sub = subs.find(s => s.id === subId);
+  if(!sub) return;
+  payConfirmSubId = subId;
+  document.getElementById('payConfirmTitle').textContent = 'تسجيل الدفع: ' + sub.store;
+  document.getElementById('pc_cost').value = '';
+  document.getElementById('pc_received').value = '';
+  document.getElementById('pc_receivedMethod').value = 'instapay';
+  document.getElementById('payConfirmError').style.display = 'none';
+  document.getElementById('payConfirmModalBg').classList.add('open');
+}
+function closePayConfirmModal(){
+  document.getElementById('payConfirmModalBg').classList.remove('open');
+}
+
+async function handlePayConfirm(){
+  const sub = subs.find(s => s.id === payConfirmSubId);
+  if(!sub) return;
+
+  const cost = parseFloat(document.getElementById('pc_cost').value) || 0;
+  const received = parseFloat(document.getElementById('pc_received').value) || 0;
+  const receivedMethod = document.getElementById('pc_receivedMethod').value;
+
+  const errEl = document.getElementById('payConfirmError');
+  if(!cost || !received){
+    errEl.textContent = 'اكتب المبلغين الاتنين';
+    errEl.style.display = 'block';
+    return;
+  }
+  errEl.style.display = 'none';
+
+  // 1) تسجيل الاشتراك كمدفوع ونقله للدورة الجاية
+  const idx = subs.findIndex(s => s.id === payConfirmSubId);
+  subs[idx].lastPaid = new Date().toISOString().slice(0,10);
+  subs[idx].renewalDate = addMonthsClamped(subs[idx].renewalDate, subs[idx].cycleMonths || 1);
+  subs[idx].notes = '';
+  await saveData();
+
+  // 2) إضافة دفعة جديدة تلقائي في تبويب المدفوعات
+  payments.push({
+    id: 'pay_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+    description: 'تجديد ' + sub.store,
+    client: sub.client || '',
+    contactMethod: sub.contactMethod || 'whatsapp',
+    contactValue: sub.contactValue || '',
+    costAmount: cost,
+    costCurrency: 'EGP',
+    amount: received,
+    currency: 'EGP',
+    receivedMethod,
+    paidDate: new Date().toISOString().slice(0,10),
+    profit: received - cost
+  });
+  await savePayments();
+
+  closePayConfirmModal();
+  render();
+  showToast('اتسجل الدفع، واتضافت دفعة جديدة في المدفوعات ✓');
 }
 
 let pendingDeleteId = null;
@@ -2534,7 +2618,7 @@ function cardHtml(s, kind){
       ${c ? `<a href="${c.url}" target="_blank" rel="noopener" class="btn btn-ghost" style="text-decoration:none;text-align:center;display:flex;align-items:center;justify-content:center;">راسله</a>` : ''}
       ${paidToday
         ? `<button class="pay-btn" style="margin-top:0;flex:1;background:var(--surface-2);color:var(--mint);cursor:default;" disabled>تم الدفع اليوم ✅</button>`
-        : `<button class="pay-btn" style="margin-top:0;flex:1;" onclick="markPaid('${s.id}')">تم الدفع ✓</button>`
+        : `<button class="pay-btn" style="margin-top:0;flex:1;" onclick="openPayConfirmModal('${s.id}')">تم الدفع ✓</button>`
       }
     </div>
   </div>`;
@@ -2582,6 +2666,11 @@ document.getElementById('invoiceCancelBtn').addEventListener('click', closeInvoi
 document.getElementById('invoiceSaveBtn').addEventListener('click', handleInvoiceSave);
 document.getElementById('invoiceModalBg').addEventListener('click', (e) => {
   if(e.target.id === 'invoiceModalBg') closeInvoiceModal();
+});
+document.getElementById('payConfirmCancelBtn').addEventListener('click', closePayConfirmModal);
+document.getElementById('payConfirmBtn').addEventListener('click', handlePayConfirm);
+document.getElementById('payConfirmModalBg').addEventListener('click', (e) => {
+  if(e.target.id === 'payConfirmModalBg') closePayConfirmModal();
 });
 
 /* ====== شاشة القفل ====== */
