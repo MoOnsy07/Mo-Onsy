@@ -413,6 +413,7 @@ let debtors = [];
 let editingDebtorId = null;
 let pendingDeleteDebtorId = null;
 let editingId = null;
+let noteEditingId = null;
 let editingPaymentId = null;
 let editingTxId = null;
 let activeTab = 'subs';
@@ -1047,6 +1048,7 @@ async function markPaid(id){
   if(idx > -1){
     subs[idx].lastPaid = new Date().toISOString().slice(0,10);
     subs[idx].renewalDate = addMonthsClamped(subs[idx].renewalDate, subs[idx].cycleMonths || 1);
+    subs[idx].notes = '';
     await saveData();
     render();
     showToast('تم تسجيل الدفع ✓');
@@ -2274,6 +2276,26 @@ function isPaidToday(s){
   return s.lastPaid === new Date().toISOString().slice(0,10);
 }
 
+function openNoteEditor(id){
+  noteEditingId = id;
+  render();
+}
+function cancelNoteEditor(){
+  noteEditingId = null;
+  render();
+}
+async function saveQuickNote(id){
+  const val = document.getElementById('quicknote_' + id).value.trim();
+  const idx = subs.findIndex(s => s.id === id);
+  if(idx > -1){
+    subs[idx].notes = val;
+    await saveData();
+  }
+  noteEditingId = null;
+  render();
+  showToast('اتحفظت الملاحظة');
+}
+
 function cardHtml(s, kind){
   const c = contactLink(s);
   const paidToday = isPaidToday(s);
@@ -2281,6 +2303,22 @@ function cardHtml(s, kind){
   if(s.diff < 0) badgeText = `متأخر ${Math.abs(s.diff)} يوم`;
   else if(kind === 'today') badgeText = 'النهاردة';
   else badgeText = 'خلال ' + s.diff + ' يوم';
+
+  let noteSection = '';
+  if(noteEditingId === s.id){
+    noteSection = `<div style="margin-top:10px;">
+      <textarea id="quicknote_${s.id}" rows="2" placeholder="اكتب ملاحظة... مثلاً: اتفقنا يدفع يوم 25" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:12.5px;font-family:inherit;resize:vertical;">${escapeHtml(s.notes||'')}</textarea>
+      <div style="display:flex;gap:6px;margin-top:6px;">
+        <button class="btn btn-primary" style="flex:1;padding:7px;font-size:12px;" onclick="saveQuickNote('${s.id}')">حفظ</button>
+        <button class="btn btn-ghost" style="flex:none;padding:7px 12px;font-size:12px;" onclick="cancelNoteEditor()">إلغاء</button>
+      </div>
+    </div>`;
+  } else if(s.notes){
+    noteSection = `<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-top:10px;font-size:12.5px;color:var(--amber);line-height:1.6;cursor:pointer;" onclick="openNoteEditor('${s.id}')" title="دوس تعدّل">📝 ${escapeHtml(s.notes)}</div>`;
+  } else if(kind === 'overdue' || kind === 'today'){
+    noteSection = `<button class="btn btn-ghost" style="width:100%;margin-top:10px;padding:6px;font-size:12px;" onclick="openNoteEditor('${s.id}')">+ إضافة ملاحظة</button>`;
+  }
+
   return `<div class="card ${kind}" style="${paidToday ? 'opacity:0.6;' : ''}">
     <span class="badge ${kind}">${badgeText}</span>
     <p class="store">${escapeHtml(s.store)}</p>
@@ -2289,7 +2327,7 @@ function cardHtml(s, kind){
       <span>${s.renewalDate} &middot; ${cycleLabel(s.cycleMonths || 1)}</span>
       <span class="amount">$${(s.amount||0).toFixed(2)} ${egpEquivalentHtml(s.amount||0)}</span>
     </div>
-    ${s.notes ? `<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-top:10px;font-size:12.5px;color:var(--amber);line-height:1.6;">📝 ${escapeHtml(s.notes)}</div>` : ''}
+    ${noteSection}
     <div style="display:flex;gap:8px;margin-top:12px;">
       ${c ? `<a href="${c.url}" target="_blank" rel="noopener" class="btn btn-ghost" style="text-decoration:none;text-align:center;display:flex;align-items:center;justify-content:center;">راسله</a>` : ''}
       ${paidToday
