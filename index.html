@@ -402,6 +402,23 @@
   </div>
 </div>
 
+<div class="modal-bg" id="invoiceModalBg">
+  <div class="modal">
+    <h2 id="invoiceModalTitle">إضافة فاتورة</h2>
+    <label>رقم الفاتورة</label>
+    <input id="inv_number" placeholder="مثال: 1001">
+    <label>الوصف</label>
+    <input id="inv_desc" placeholder="مثال: فاتورة تصميم شعار">
+    <label>السعر</label>
+    <input id="inv_amount" type="number" step="0.01" placeholder="مثال: 300">
+    <p id="invoiceFormError" style="color:var(--red);font-size:12.5px;margin:14px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="invoiceCancelBtn">إلغاء</button>
+      <button class="btn btn-primary" id="invoiceSaveBtn">حفظ</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" style="position:fixed;bottom:28px;right:28px;background:#171E2E;border:1px solid #2DD4BF;color:#2DD4BF;padding:12px 18px;border-radius:10px;font-size:13.5px;display:none;z-index:60;font-family:'IBM Plex Sans Arabic',sans-serif;max-width:280px;"></div>
 
 <script>
@@ -414,6 +431,9 @@ let editingDebtorId = null;
 let pendingDeleteDebtorId = null;
 let editingId = null;
 let noteEditingId = null;
+let invoices = [];
+let editingInvoiceId = null;
+let pendingDeleteInvoiceId = null;
 let editingPaymentId = null;
 let editingTxId = null;
 let activeTab = 'subs';
@@ -563,6 +583,13 @@ function toRemoteDebtorShape(d){
 }
 function fromRemoteDebtorShape(r){
   return { id: r.id, name: r.name, amount: r.amount || 0 };
+}
+
+function toRemoteInvoiceShape(inv){
+  return { id: inv.id, description: inv.description, amount: inv.amount || 0, status: inv.status || 'pending', number: inv.number || null };
+}
+function fromRemoteInvoiceShape(r){
+  return { id: r.id, description: r.description, amount: r.amount || 0, status: r.status || 'pending', number: r.number || '' };
 }
 
 
@@ -764,6 +791,7 @@ async function loadData(){
   await loadWallets();
   await loadVaultMeta();
   await loadDebtors();
+  await loadInvoices();
   fetchLiveRate();
   render();
 }
@@ -916,6 +944,47 @@ async function deleteRemoteDebtorRow(id){
     });
   }catch(e){
     console.error('delete debtor error', e);
+    showToast('حصل خطأ في الحذف', true);
+  }
+}
+
+async function loadInvoices(){
+  if(!isConfigured()) return;
+  try{
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/invoices?select=*`, { headers: sbHeaders() });
+    if(!res.ok) throw new Error('fetch failed: ' + res.status);
+    const rows = await res.json();
+    invoices = rows.map(fromRemoteInvoiceShape);
+  }catch(e){
+    console.error('load invoices error', e);
+    showToast('حصل خطأ في تحميل الفواتير (اتأكدت من إنشاء جدول invoices؟)', true);
+    invoices = [];
+  }
+}
+
+async function saveInvoices(){
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/invoices`, {
+      method: 'POST',
+      headers: sbHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify(invoices.map(toRemoteInvoiceShape))
+    });
+  }catch(e){
+    console.error('save invoices error', e);
+    showToast('حصل خطأ في حفظ الفاتورة', true);
+  }
+}
+
+async function deleteRemoteInvoiceRow(id){
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/invoices?id=eq.${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: sbHeaders()
+    });
+  }catch(e){
+    console.error('delete invoice error', e);
     showToast('حصل خطأ في الحذف', true);
   }
 }
@@ -1673,6 +1742,7 @@ function tabBarHtml(){
     <button class="tab-btn ${activeTab==='subs'?'active':''}" onclick="switchTab('subs')">الاشتراكات</button>
     <button class="tab-btn ${activeTab==='payments'?'active':''}" onclick="switchTab('payments')">مدفوعات</button>
     <button class="tab-btn ${activeTab==='clients'?'active':''}" onclick="switchTab('clients')">العملاء</button>
+    <button class="tab-btn ${activeTab==='invoices'?'active':''}" onclick="switchTab('invoices')">الفواتير</button>
   </div>`;
 }
 
@@ -1694,6 +1764,12 @@ function render(){
   } else if(activeTab === 'clients'){
     fab.style.display = 'none';
     html += renderClientsTab();
+  } else if(activeTab === 'invoices'){
+    fab.style.display = 'flex';
+    fab.title = 'إضافة فاتورة';
+    fab.innerHTML = '+ إضافة فاتورة';
+    fab.onclick = () => openInvoiceModal(null);
+    html += renderInvoicesTab();
   } else {
     activeTab = 'subs';
     fab.style.display = 'flex';
@@ -2004,6 +2080,132 @@ function openClientModal(key){
 }
 function closeClientModal(){
   document.getElementById('clientModalBg').classList.remove('open');
+}
+
+/* ====== الفواتير (مرجع مستقل، مش مرتبط بأي حاجة تانية) ====== */
+function openInvoiceModal(inv){
+  editingInvoiceId = inv ? inv.id : null;
+  document.getElementById('invoiceModalTitle').textContent = inv ? 'تعديل فاتورة' : 'إضافة فاتورة';
+  document.getElementById('inv_number').value = inv ? (inv.number || '') : '';
+  document.getElementById('inv_desc').value = inv ? inv.description : '';
+  document.getElementById('inv_amount').value = inv ? inv.amount : '';
+  document.getElementById('invoiceFormError').style.display = 'none';
+  document.getElementById('invoiceModalBg').classList.add('open');
+}
+function closeInvoiceModal(){
+  document.getElementById('invoiceModalBg').classList.remove('open');
+}
+
+async function handleInvoiceSave(){
+  const number = document.getElementById('inv_number').value.trim();
+  const description = document.getElementById('inv_desc').value.trim();
+  const amount = parseFloat(document.getElementById('inv_amount').value) || 0;
+  const errEl = document.getElementById('invoiceFormError');
+  if(!description || !amount){
+    errEl.textContent = 'اكتب وصف ومبلغ صحيح';
+    errEl.style.display = 'block';
+    return;
+  }
+  if(number){
+    const duplicate = invoices.some(i => i.id !== editingInvoiceId && (i.number || '').trim().toLowerCase() === number.toLowerCase());
+    if(duplicate){
+      errEl.textContent = 'رقم الفاتورة ده مستخدم قبل كده في فاتورة تانية';
+      errEl.style.display = 'block';
+      return;
+    }
+  }
+  errEl.style.display = 'none';
+
+  if(editingInvoiceId){
+    const idx = invoices.findIndex(i => i.id === editingInvoiceId);
+    if(idx > -1) invoices[idx] = {...invoices[idx], number, description, amount};
+  } else {
+    invoices.push({
+      id: 'inv_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+      number, description, amount, status: 'pending'
+    });
+  }
+  await saveInvoices();
+  closeInvoiceModal();
+  render();
+  showToast(editingInvoiceId ? 'تم تحديث الفاتورة' : 'تم إضافة الفاتورة');
+}
+
+async function setInvoiceStatus(id, status){
+  const idx = invoices.findIndex(i => i.id === id);
+  if(idx > -1){
+    invoices[idx].status = status;
+    await saveInvoices();
+    render();
+    showToast(status === 'paid' ? 'اتسجلت الفاتورة كمدفوعة ✓' : (status === 'cancelled' ? 'اتلغت الفاتورة' : 'رجعت قيد الانتظار'));
+  }
+}
+
+async function deleteInvoice(id){
+  if(pendingDeleteInvoiceId !== id){
+    pendingDeleteInvoiceId = id;
+    render();
+    return;
+  }
+  pendingDeleteInvoiceId = null;
+  invoices = invoices.filter(i => i.id !== id);
+  await deleteRemoteInvoiceRow(id);
+  render();
+  showToast('تم حذف الفاتورة');
+}
+function cancelDeleteInvoice(){
+  pendingDeleteInvoiceId = null;
+  render();
+}
+
+function invoiceStatusInfo(status){
+  return {
+    pending: { text: 'قيد الانتظار', color: 'var(--amber)', bg: 'var(--amber-dim)' },
+    paid: { text: 'مدفوعة', color: 'var(--mint)', bg: 'var(--mint-dim)' },
+    cancelled: { text: 'ملغاة', color: 'var(--red)', bg: 'var(--red-dim)' }
+  }[status] || { text: status, color: 'var(--muted)', bg: 'var(--surface-2)' };
+}
+
+function renderInvoicesTab(){
+  const pending = invoices.filter(i => i.status === 'pending');
+  const totalPending = pending.reduce((s,i)=>s+(i.amount||0),0);
+
+  let html = `<p class="sub">مرجع فواتير مستقل — ${invoices.length} فاتورة، ${pending.length} لسه قيد الانتظار (${totalPending.toFixed(2)})</p>`;
+
+  if(invoices.length === 0){
+    html += `<div class="empty">لسه معملتش فواتير. دوس على زرار (+) تحت عشان تضيف أول فاتورة.</div>`;
+  } else {
+    const sorted = [...invoices].sort((a,b) => (a.status==='pending'?0:1) - (b.status==='pending'?0:1));
+    html += `<div class="cards">`;
+    sorted.forEach(inv => {
+      const st = invoiceStatusInfo(inv.status);
+      html += `<div class="card" style="cursor:default;${inv.status!=='pending'?'opacity:0.6;':''}">
+        <span class="badge" style="background:${st.bg};color:${st.color};">${st.text}</span>
+        <p class="store">${escapeHtml(inv.description)}</p>
+        ${inv.number ? `<p class="client">رقم: ${escapeHtml(inv.number)}</p>` : ''}
+        <div class="meta" style="margin-top:6px;">
+          <span class="amount" style="font-size:18px;">${(inv.amount||0).toFixed(2)}</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+          ${inv.status === 'pending' ? `
+            <button class="pay-btn" style="margin-top:0;flex:1;" onclick="setInvoiceStatus('${inv.id}','paid')">دفع ✓</button>
+            <button class="btn btn-ghost" style="flex:1;padding:8px;" onclick="setInvoiceStatus('${inv.id}','cancelled')">إلغاء</button>
+          ` : `
+            <button class="btn btn-ghost" style="flex:1;padding:8px;font-size:12.5px;" onclick="setInvoiceStatus('${inv.id}','pending')">↺ رجّعها قيد الانتظار</button>
+          `}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button class="btn btn-ghost" style="flex:1;padding:6px;font-size:12px;" onclick="openInvoiceModal(invoices.find(x=>x.id==='${inv.id}'))">تعديل</button>
+          ${pendingDeleteInvoiceId === inv.id ? `
+            <button class="btn" style="flex:1;padding:6px;font-size:12px;background:var(--red-dim);color:var(--red);" onclick="deleteInvoice('${inv.id}')">تأكيد الحذف</button>
+            <button class="btn btn-ghost" style="flex:none;padding:6px 10px;font-size:12px;" onclick="cancelDeleteInvoice()">↩</button>
+          ` : `<button class="btn btn-ghost" style="flex:1;padding:6px;font-size:12px;" onclick="deleteInvoice('${inv.id}')">حذف</button>`}
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+  return html;
 }
 
 function renderPaymentsTab(){
@@ -2375,6 +2577,11 @@ document.getElementById('credModalBg').addEventListener('click', (e) => {
 document.getElementById('clientCloseBtn').addEventListener('click', closeClientModal);
 document.getElementById('clientModalBg').addEventListener('click', (e) => {
   if(e.target.id === 'clientModalBg') closeClientModal();
+});
+document.getElementById('invoiceCancelBtn').addEventListener('click', closeInvoiceModal);
+document.getElementById('invoiceSaveBtn').addEventListener('click', handleInvoiceSave);
+document.getElementById('invoiceModalBg').addEventListener('click', (e) => {
+  if(e.target.id === 'invoiceModalBg') closeInvoiceModal();
 });
 
 /* ====== شاشة القفل ====== */
