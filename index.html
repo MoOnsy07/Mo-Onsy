@@ -1897,13 +1897,13 @@ function buildClientsMap(){
   subs.forEach(s => {
     const key = clientKeyFor(s.contactMethod, s.contactValue);
     if(!key) return;
-    ensure(key, s.client || s.store, s.contactMethod, s.contactValue);
+    ensure(key, s.client, s.contactMethod, s.contactValue);
     map[key].subs.push(s);
   });
   payments.forEach(p => {
     const key = clientKeyFor(p.contactMethod, p.contactValue);
     if(!key) return;
-    ensure(key, p.client || p.description, p.contactMethod, p.contactValue);
+    ensure(key, p.client, p.contactMethod, p.contactValue);
     map[key].payments.push(p);
   });
   return Object.values(map);
