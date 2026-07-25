@@ -462,6 +462,7 @@ let editingTxId = null;
 let activeTab = 'subs';
 let paymentsMonthFilter = null;
 let paymentsSearchQuery = '';
+let paymentsContactSearch = '';
 let paymentsDateFrom = '';
 let paymentsDateTo = '';
 let clientsSearchQuery = '';
@@ -2029,6 +2030,7 @@ function resetPaymentsFilters(){
   paymentsDateFrom = '';
   paymentsDateTo = '';
   paymentsMonthFilter = null;
+  paymentsContactSearch = '';
   render();
 }
 
@@ -2332,6 +2334,15 @@ function renderInvoicesTab(){
   return html;
 }
 
+function normalizeContact(str){
+  return (str||'').replace(/[^a-z0-9]/gi,'').toLowerCase();
+}
+
+function switchPaymentsContactSearch(val){
+  paymentsContactSearch = val;
+  render();
+}
+
 function renderPaymentsTab(){
   const months = getAvailableMonths(payments, 'paidDate');
   const filtered = payments.filter(p => {
@@ -2344,6 +2355,10 @@ function renderPaymentsTab(){
       const matchClient = (p.client || '').toLowerCase().includes(q);
       if(!matchDesc && !matchClient) return false;
     }
+    if(paymentsContactSearch){
+      const cq = normalizeContact(paymentsContactSearch);
+      if(!normalizeContact(p.contactValue).includes(cq)) return false;
+    }
     return true;
   });
 
@@ -2355,9 +2370,17 @@ function renderPaymentsTab(){
   const methodTotals = {};
   methods.forEach(m => { methodTotals[m] = filtered.filter(p=>p.currency==='EGP' && (p.receivedMethod||'other')===m).reduce((s,p)=>s+(p.amount||0),0); });
 
-  let html = `<div class="month-pills">
-    <button class="month-pill ${!paymentsMonthFilter?'active':''}" onclick="switchPaymentsMonth('all')">كل الشهور</button>
-    ${months.map(m => `<button class="month-pill ${paymentsMonthFilter===m?'active':''}" onclick="switchPaymentsMonth('${m}')">${monthLabel(m)}</button>`).join('')}
+  let html = `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+    <div class="month-pills" style="margin-bottom:0;flex:1;">
+      <button class="month-pill ${!paymentsMonthFilter?'active':''}" onclick="switchPaymentsMonth('all')">كل الشهور</button>
+      ${months.map(m => `<button class="month-pill ${paymentsMonthFilter===m?'active':''}" onclick="switchPaymentsMonth('${m}')">${monthLabel(m)}</button>`).join('')}
+    </div>
+    <div style="flex:none;width:180px;">
+      <input id="paymentsContactSearchInput" value="${escapeHtml(paymentsContactSearch)}" placeholder="🔍 رقم العميل / الأكونت"
+        style="font-size:12.5px;padding:8px 10px;"
+        onkeydown="if(event.key==='Enter') switchPaymentsContactSearch(this.value)"
+        onblur="switchPaymentsContactSearch(this.value)">
+    </div>
   </div>`;
 
   html += `<div class="calc-card" style="margin-bottom:16px;padding:14px 16px;">
