@@ -236,14 +236,16 @@
   <div class="modal">
     <h2 id="modalTitle">إضافة اشتراك جديد</h2>
     <label>اسم الخدمة</label>
-    <input id="f_store" placeholder="مثال: اشتراك Shopify - متجر روزا">
+    <input id="f_store" list="serviceNamesList" placeholder="مثال: اشتراك Shopify - متجر روزا">
+    <datalist id="serviceNamesList"></datalist>
     <label>وسيلة التواصل</label>
     <select id="f_contactMethod" onchange="updateContactLabel()">
       <option value="whatsapp">واتساب</option>
       <option value="messenger">ماسنجر</option>
     </select>
     <label id="f_contactValueLabel">رقم الواتساب</label>
-    <input id="f_contactValue" placeholder="مثال: 201012345678">
+    <input id="f_contactValue" list="clientContactList" placeholder="مثال: 201012345678">
+    <datalist id="clientContactList"></datalist>
     <label>نوع الاشتراك</label>
     <select id="f_service">
       <option value="Shopify">Shopify</option>
@@ -261,8 +263,14 @@
       <option value="6">نصف سنوي (كل ٦ شهور)</option>
       <option value="12">سنوي</option>
     </select>
-    <label>المبلغ (بالدولار)</label>
-    <input id="f_amount" type="number" step="0.01" placeholder="مثال: 39">
+    <label>المبلغ والعملة</label>
+    <div style="display:flex;gap:8px;">
+      <input id="f_amount" type="number" step="0.01" placeholder="مثال: 39" style="flex:1;">
+      <select id="f_currency" style="width:auto;">
+        <option value="USD">دولار</option>
+        <option value="EGP">جنيه</option>
+      </select>
+    </div>
     <label>ملاحظة (اختياري)</label>
     <textarea id="f_notes" rows="2" placeholder="مثال: اتفقنا يدفع يوم 25، أو العميل بيتأخر عادة" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:10px 11px;border-radius:9px;font-size:14px;font-family:inherit;resize:vertical;"></textarea>
     <p id="formError" style="color:var(--red);font-size:12.5px;margin:14px 0 0;display:none;"></p>
@@ -495,6 +503,7 @@ function toRemoteShape(s){
     service: s.service,
     day: s.renewalDate ? parseInt(s.renewalDate.split('-')[2], 10) : (s.day || 1),
     amount: s.amount || 0,
+    currency: s.currency || 'USD',
     contact_method: s.contactMethod || null,
     contact_value: s.contactValue || null,
     last_paid: s.lastPaid || null,
@@ -514,6 +523,7 @@ function fromRemoteShape(r){
     service: r.service,
     day: r.day,
     amount: r.amount,
+    currency: r.currency || 'USD',
     contactMethod: r.contact_method,
     contactValue: r.contact_value,
     lastPaid: r.last_paid,
@@ -745,6 +755,25 @@ function egpEquivalentHtml(usdAmount){
   const eq = egpEquivalent(usdAmount);
   if(eq === null) return '';
   return `<span style="color:var(--muted);font-size:12px;">(≈ ${eq.toFixed(2)} ج.م)</span>`;
+}
+
+/* بيحول أي مبلغ اشتراك (دولار أو جنيه) لمكافئه بالدولار، عشان نقدر نجمع إجمالي موحّد */
+function subUsdEquivalent(sub){
+  if((sub.currency || 'USD') === 'EGP'){
+    if(!liveUsdRate) return 0;
+    return (sub.amount || 0) / liveUsdRate;
+  }
+  return sub.amount || 0;
+}
+
+/* بيعرض مبلغ الاشتراك بعملته الأصلية، مع المكافئ بالعملة التانية بين قوسين */
+function subAmountHtml(sub){
+  const amount = sub.amount || 0;
+  if((sub.currency || 'USD') === 'EGP'){
+    const usdEq = liveUsdRate ? (amount / liveUsdRate) : null;
+    return `${amount.toFixed(2)} ج.م ${usdEq !== null ? `<span style="color:var(--muted);font-size:12px;">(≈ $${usdEq.toFixed(2)})</span>` : ''}`;
+  }
+  return `$${amount.toFixed(2)} ${egpEquivalentHtml(amount)}`;
 }
 
 /* ====== خزنة بيانات الدخول (تشفير محلي بالكامل، الباسورد مايتخزنش خالص) ====== */
@@ -1079,14 +1108,23 @@ function updateContactLabel(){
   }
 }
 
+function populateDatalists(){
+  const services = [...new Set(subs.map(s => s.store).filter(Boolean))];
+  const contacts = [...new Set(subs.map(s => s.contactValue).filter(Boolean))];
+  document.getElementById('serviceNamesList').innerHTML = services.map(v => `<option value="${escapeHtml(v)}">`).join('');
+  document.getElementById('clientContactList').innerHTML = contacts.map(v => `<option value="${escapeHtml(v)}">`).join('');
+}
+
 function openModal(sub){
   editingId = sub ? sub.id : null;
   document.getElementById('modalTitle').textContent = sub ? 'تعديل اشتراك' : 'إضافة اشتراك جديد';
+  populateDatalists();
   document.getElementById('f_store').value = sub ? sub.store : '';
   document.getElementById('f_service').value = sub ? sub.service : 'Shopify';
   document.getElementById('f_renewalDate').value = sub ? sub.renewalDate : new Date().toISOString().slice(0,10);
   document.getElementById('f_cycle').value = sub ? (sub.cycleMonths || 1) : 1;
   document.getElementById('f_amount').value = sub ? sub.amount : '';
+  document.getElementById('f_currency').value = sub ? (sub.currency || 'USD') : 'USD';
   document.getElementById('f_contactMethod').value = sub ? (sub.contactMethod || 'whatsapp') : 'whatsapp';
   document.getElementById('f_contactValue').value = sub ? (sub.contactValue || '') : '';
   document.getElementById('f_notes').value = sub ? (sub.notes || '') : '';
@@ -1104,6 +1142,7 @@ async function handleSave(){
   const renewalDate = document.getElementById('f_renewalDate').value;
   const cycleMonths = parseInt(document.getElementById('f_cycle').value, 10);
   const amount = parseFloat(document.getElementById('f_amount').value) || 0;
+  const currency = document.getElementById('f_currency').value;
   const contactMethod = document.getElementById('f_contactMethod').value;
   const contactValue = document.getElementById('f_contactValue').value.trim();
   const notes = document.getElementById('f_notes').value.trim();
@@ -1119,12 +1158,12 @@ async function handleSave(){
   if(editingId){
     const idx = subs.findIndex(s => s.id === editingId);
     if(idx > -1){
-      subs[idx] = {...subs[idx], store, service, renewalDate, cycleMonths, amount, contactMethod, contactValue, notes};
+      subs[idx] = {...subs[idx], store, service, renewalDate, cycleMonths, amount, currency, contactMethod, contactValue, notes};
     }
   } else {
     subs.push({
       id: 'sub_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
-      store, service, renewalDate, cycleMonths, amount, contactMethod, contactValue, notes,
+      store, service, renewalDate, cycleMonths, amount, currency, contactMethod, contactValue, notes,
       lastPaid: null
     });
   }
@@ -1880,7 +1919,7 @@ function renderSubsTab(){
   const dueToday = withDiff.filter(s => s.diff === 0);
   const dueSoon = withDiff.filter(s => s.diff > 0 && s.diff <= 3).sort((a,b)=>a.diff-b.diff);
   const sortedAll = [...withDiff].sort((a,b)=>a.diff-b.diff);
-  const totalMonthly = activeSubs.reduce((sum,s)=>sum+(s.amount||0),0);
+  const totalMonthly = activeSubs.reduce((sum,s)=>sum+subUsdEquivalent(s),0);
 
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
     <p class="sub" style="margin:0;">${activeSubs.length} اشتراك نشط &middot; إجمالي شهري تقريبي $${totalMonthly.toFixed(2)} ${egpEquivalentHtml(totalMonthly)}${cancelledSubs.length ? ' &middot; ' + cancelledSubs.length + ' ملغي' : ''}</p>
@@ -1947,7 +1986,7 @@ function renderSubsTab(){
         <td>${contactCellHtml(s)}</td>
         <td>${s.renewalDate}</td>
         <td>${cycleLabel(s.cycleMonths || 1)}</td>
-        <td>$${(s.amount||0).toFixed(2)} ${egpEquivalentHtml(s.amount||0)}</td>
+        <td>${subAmountHtml(s)}</td>
         <td style="color:${statusColor};font-weight:600;">${statusText}</td>
         <td>${s.lastPaid ? s.lastPaid : '—'}</td>
         <td>
@@ -1978,7 +2017,7 @@ function renderSubsTab(){
         <td>${escapeHtml(s.store)}</td>
         <td>${fmtService(s.service)}</td>
         <td>${contactCellHtml(s)}</td>
-        <td>$${(s.amount||0).toFixed(2)}</td>
+        <td>${(s.currency==='EGP') ? (s.amount||0).toFixed(2)+' ج.م' : '$'+(s.amount||0).toFixed(2)}</td>
         <td>
           <div class="row-actions">
             <button class="icon-btn" onclick="cancelSub('${s.id}')" title="إعادة التفعيل">↺</button>
@@ -2136,7 +2175,7 @@ function openClientModal(key){
 
   const activeSubsCount = c.subs.filter(s => !s.cancelled).length;
   const cancelledCount = c.subs.filter(s => s.cancelled).length;
-  const subsTotalUsd = c.subs.filter(s => !s.cancelled).reduce((s,x)=>s+(x.amount||0),0);
+  const subsTotalUsd = c.subs.filter(s => !s.cancelled).reduce((s,x)=>s+subUsdEquivalent(x),0);
   const paymentsTotalEgp = c.payments.filter(p=>p.currency==='EGP').reduce((s,p)=>s+(p.amount||0),0);
   const profitTotalEgp = c.payments.reduce((s,p)=>s+(p.profit||0),0);
   const contact = c.contactValue ? contactLink({contactMethod:c.contactMethod, contactValue:c.contactValue}) : null;
@@ -2154,7 +2193,7 @@ function openClientModal(key){
     [...c.subs].sort((a,b)=> (a.cancelled?1:0) - (b.cancelled?1:0)).forEach(s => {
       body += `<div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:9px 12px;margin-bottom:6px;font-size:13px;${s.cancelled?'opacity:0.5;':''}">
         <span>${escapeHtml(s.store)} <span style="color:var(--muted);">(${fmtService(s.service)})</span></span>
-        <span>${s.cancelled ? 'ملغي' : '$'+(s.amount||0).toFixed(2)+' &middot; '+cycleLabel(s.cycleMonths||1)}</span>
+        <span>${s.cancelled ? 'ملغي' : (s.currency==='EGP' ? (s.amount||0).toFixed(2)+' ج.م' : '$'+(s.amount||0).toFixed(2))+' &middot; '+cycleLabel(s.cycleMonths||1)}</span>
       </div>`;
     });
   }
@@ -2669,7 +2708,7 @@ function cardHtml(s, kind){
     <p class="client">${s.contactValue ? escapeHtml(s.contactValue) + ' &middot; ' : ''}${s.service}</p>
     <div class="meta">
       <span>${s.renewalDate} &middot; ${cycleLabel(s.cycleMonths || 1)}</span>
-      <span class="amount">$${(s.amount||0).toFixed(2)} ${egpEquivalentHtml(s.amount||0)}</span>
+      <span class="amount">${subAmountHtml(s)}</span>
     </div>
     ${noteSection}
     <div style="display:flex;gap:8px;margin-top:12px;">
