@@ -285,7 +285,7 @@
   <div class="modal">
     <h2 id="paymentModalTitle">إضافة دفعة جديدة</h2>
     <label>وصف الخدمة</label>
-    <input id="p_desc" placeholder="مثال: تصميم لوجو - متجر روزا">
+    <input id="p_desc" list="serviceNamesList" placeholder="مثال: تصميم لوجو - متجر روزا">
     <label>اسم العميل (اختياري)</label>
     <input id="p_client" placeholder="مثال: أحمد محمد">
     <label>وسيلة التواصل</label>
@@ -294,7 +294,7 @@
       <option value="messenger">ماسنجر</option>
     </select>
     <label id="p_contactValueLabel">رقم الواتساب</label>
-    <input id="p_contactValue" placeholder="مثال: 201012345678">
+    <input id="p_contactValue" list="clientContactList" placeholder="مثال: 201012345678">
     <label>قيمة المعاملة (التكلفة الأصلية قبل ربحك)</label>
     <div style="display:flex;gap:8px;">
       <input id="p_costAmount" type="number" step="0.01" placeholder="مثال: 450" style="flex:1;">
@@ -1109,8 +1109,14 @@ function updateContactLabel(){
 }
 
 function populateDatalists(){
-  const services = [...new Set(subs.map(s => s.store).filter(Boolean))];
-  const contacts = [...new Set(subs.map(s => s.contactValue).filter(Boolean))];
+  const services = [...new Set([
+    ...subs.map(s => s.store),
+    ...payments.map(p => p.description)
+  ].filter(Boolean))];
+  const contacts = [...new Set([
+    ...subs.map(s => s.contactValue),
+    ...payments.map(p => p.contactValue)
+  ].filter(Boolean))];
   document.getElementById('serviceNamesList').innerHTML = services.map(v => `<option value="${escapeHtml(v)}">`).join('');
   document.getElementById('clientContactList').innerHTML = contacts.map(v => `<option value="${escapeHtml(v)}">`).join('');
 }
@@ -1283,6 +1289,7 @@ function updatePaymentContactLabel(){
 function openPaymentModal(p){
   editingPaymentId = p ? p.id : null;
   document.getElementById('paymentModalTitle').textContent = p ? 'تعديل دفعة' : 'إضافة دفعة جديدة';
+  populateDatalists();
   document.getElementById('p_desc').value = p ? p.description : '';
   document.getElementById('p_client').value = p ? (p.client || '') : '';
   document.getElementById('p_contactMethod').value = p ? (p.contactMethod || 'whatsapp') : 'whatsapp';
