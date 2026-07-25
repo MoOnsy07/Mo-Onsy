@@ -237,8 +237,6 @@
     <h2 id="modalTitle">إضافة اشتراك جديد</h2>
     <label>اسم الخدمة</label>
     <input id="f_store" placeholder="مثال: اشتراك Shopify - متجر روزا">
-    <label>اسم العميل (اختياري)</label>
-    <input id="f_client" placeholder="مثال: أحمد محمد">
     <label>وسيلة التواصل</label>
     <select id="f_contactMethod" onchange="updateContactLabel()">
       <option value="whatsapp">واتساب</option>
@@ -1084,7 +1082,6 @@ function openModal(sub){
   editingId = sub ? sub.id : null;
   document.getElementById('modalTitle').textContent = sub ? 'تعديل اشتراك' : 'إضافة اشتراك جديد';
   document.getElementById('f_store').value = sub ? sub.store : '';
-  document.getElementById('f_client').value = sub ? sub.client : '';
   document.getElementById('f_service').value = sub ? sub.service : 'Shopify';
   document.getElementById('f_renewalDate').value = sub ? sub.renewalDate : new Date().toISOString().slice(0,10);
   document.getElementById('f_cycle').value = sub ? (sub.cycleMonths || 1) : 1;
@@ -1102,7 +1099,6 @@ function closeModal(){
 
 async function handleSave(){
   const store = document.getElementById('f_store').value.trim();
-  const client = document.getElementById('f_client').value.trim();
   const service = document.getElementById('f_service').value;
   const renewalDate = document.getElementById('f_renewalDate').value;
   const cycleMonths = parseInt(document.getElementById('f_cycle').value, 10);
@@ -1122,12 +1118,12 @@ async function handleSave(){
   if(editingId){
     const idx = subs.findIndex(s => s.id === editingId);
     if(idx > -1){
-      subs[idx] = {...subs[idx], store, client, service, renewalDate, cycleMonths, amount, contactMethod, contactValue, notes};
+      subs[idx] = {...subs[idx], store, service, renewalDate, cycleMonths, amount, contactMethod, contactValue, notes};
     }
   } else {
     subs.push({
       id: 'sub_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
-      store, client, service, renewalDate, cycleMonths, amount, contactMethod, contactValue, notes,
+      store, service, renewalDate, cycleMonths, amount, contactMethod, contactValue, notes,
       lastPaid: null
     });
   }
@@ -1924,7 +1920,7 @@ function renderSubsTab(){
     html += `<div class="empty">لسه معملتش اشتراكات. دوس على زرار (+) تحت عشان تضيف أول اشتراك.</div>`;
   } else {
     html += `<table><thead><tr>
-      <th>اسم الخدمة</th><th>العميل</th><th>النوع</th><th>تواصل</th><th>تاريخ التجديد</th><th>الدورة</th><th>المبلغ</th><th>الحالة</th><th>آخر دفعة</th><th></th>
+      <th>اسم الخدمة</th><th>النوع</th><th>تواصل</th><th>تاريخ التجديد</th><th>الدورة</th><th>المبلغ</th><th>الحالة</th><th>آخر دفعة</th><th></th>
     </tr></thead><tbody>`;
     sortedAll.forEach(s => {
       let statusText, statusColor;
@@ -1933,7 +1929,6 @@ function renderSubsTab(){
       else { statusText = s.diff + ' يوم'; statusColor = 'var(--text)'; }
       html += `<tr>
         <td>${escapeHtml(s.store)}</td>
-        <td>${escapeHtml(s.client || '—')}</td>
         <td>${fmtService(s.service)}</td>
         <td>${contactCellHtml(s)}</td>
         <td>${s.renewalDate}</td>
@@ -1962,13 +1957,13 @@ function renderSubsTab(){
   if(cancelledSubs.length > 0){
     html += `<div class="section-title" style="color:var(--muted);">اشتراكات ملغاة <span class="count-pill" style="background:var(--surface-2);color:var(--muted);">${cancelledSubs.length}</span></div>
       <table><thead><tr>
-      <th>اسم الخدمة</th><th>العميل</th><th>النوع</th><th>المبلغ</th><th></th>
+      <th>اسم الخدمة</th><th>النوع</th><th>تواصل</th><th>المبلغ</th><th></th>
     </tr></thead><tbody>`;
     cancelledSubs.forEach(s => {
       html += `<tr style="opacity:0.55;">
         <td>${escapeHtml(s.store)}</td>
-        <td>${escapeHtml(s.client || '—')}</td>
         <td>${fmtService(s.service)}</td>
+        <td>${contactCellHtml(s)}</td>
         <td>$${(s.amount||0).toFixed(2)}</td>
         <td>
           <div class="row-actions">
@@ -2653,7 +2648,7 @@ function cardHtml(s, kind){
   return `<div class="card ${kind}" style="${paidToday ? 'opacity:0.6;' : ''}">
     <span class="badge ${kind}">${badgeText}</span>
     <p class="store">${escapeHtml(s.store)}</p>
-    <p class="client">${escapeHtml(s.client || '')} ${s.client ? '&middot; ' : ''}${s.service}</p>
+    <p class="client">${s.contactValue ? escapeHtml(s.contactValue) + ' &middot; ' : ''}${s.service}</p>
     <div class="meta">
       <span>${s.renewalDate} &middot; ${cycleLabel(s.cycleMonths || 1)}</span>
       <span class="amount">$${(s.amount||0).toFixed(2)} ${egpEquivalentHtml(s.amount||0)}</span>
