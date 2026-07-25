@@ -462,7 +462,7 @@ let editingTxId = null;
 let activeTab = 'subs';
 let paymentsMonthFilter = null;
 let paymentsSearchQuery = '';
-let paymentsContactSearch = '';
+let subsContactSearch = '';
 let paymentsDateFrom = '';
 let paymentsDateTo = '';
 let clientsSearchQuery = '';
@@ -1864,9 +1864,16 @@ function render(){
   app.innerHTML = html;
 }
 
+function switchSubsContactSearch(val){
+  subsContactSearch = val;
+  render();
+}
+
 function renderSubsTab(){
-  const activeSubs = subs.filter(s => !s.cancelled);
-  const cancelledSubs = subs.filter(s => s.cancelled);
+  const cq = normalizeContact(subsContactSearch);
+  const baseSubs = cq ? subs.filter(s => normalizeContact(s.contactValue).includes(cq)) : subs;
+  const activeSubs = baseSubs.filter(s => !s.cancelled);
+  const cancelledSubs = baseSubs.filter(s => s.cancelled);
 
   const withDiff = activeSubs.map(s => ({...s, diff: computeDiff(s)}));
   const overdue = withDiff.filter(s => s.diff < 0).sort((a,b)=>a.diff-b.diff);
@@ -1875,9 +1882,15 @@ function renderSubsTab(){
   const sortedAll = [...withDiff].sort((a,b)=>a.diff-b.diff);
   const totalMonthly = activeSubs.reduce((sum,s)=>sum+(s.amount||0),0);
 
-  let html = `<p class="sub">${activeSubs.length} اشتراك نشط &middot; إجمالي شهري تقريبي $${totalMonthly.toFixed(2)} ${egpEquivalentHtml(totalMonthly)}${cancelledSubs.length ? ' &middot; ' + cancelledSubs.length + ' ملغي' : ''}</p>
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
+    <p class="sub" style="margin:0;">${activeSubs.length} اشتراك نشط &middot; إجمالي شهري تقريبي $${totalMonthly.toFixed(2)} ${egpEquivalentHtml(totalMonthly)}${cancelledSubs.length ? ' &middot; ' + cancelledSubs.length + ' ملغي' : ''}</p>
+    <input id="subsContactSearchInput" value="${escapeHtml(subsContactSearch)}" placeholder="🔍 رقم العميل / الأكونت"
+      style="width:170px;font-size:12.5px;padding:8px 10px;flex:none;"
+      onkeydown="if(event.key==='Enter') switchSubsContactSearch(this.value)"
+      onblur="switchSubsContactSearch(this.value)">
+  </div>
 
-    <div style="display:flex;gap:10px;margin-bottom:20px;">
+    <div style="display:flex;gap:10px;margin:14px 0 20px;">
       <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="exportData()">⬇ تصدير نسخة احتياطية</button>
       <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="document.getElementById('importFile').click()">⬆ استيراد نسخة</button>
       <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(event)">
@@ -2030,7 +2043,6 @@ function resetPaymentsFilters(){
   paymentsDateFrom = '';
   paymentsDateTo = '';
   paymentsMonthFilter = null;
-  paymentsContactSearch = '';
   render();
 }
 
@@ -2338,11 +2350,6 @@ function normalizeContact(str){
   return (str||'').replace(/[^a-z0-9]/gi,'').toLowerCase();
 }
 
-function switchPaymentsContactSearch(val){
-  paymentsContactSearch = val;
-  render();
-}
-
 function renderPaymentsTab(){
   const months = getAvailableMonths(payments, 'paidDate');
   const filtered = payments.filter(p => {
@@ -2355,10 +2362,6 @@ function renderPaymentsTab(){
       const matchClient = (p.client || '').toLowerCase().includes(q);
       if(!matchDesc && !matchClient) return false;
     }
-    if(paymentsContactSearch){
-      const cq = normalizeContact(paymentsContactSearch);
-      if(!normalizeContact(p.contactValue).includes(cq)) return false;
-    }
     return true;
   });
 
@@ -2370,17 +2373,9 @@ function renderPaymentsTab(){
   const methodTotals = {};
   methods.forEach(m => { methodTotals[m] = filtered.filter(p=>p.currency==='EGP' && (p.receivedMethod||'other')===m).reduce((s,p)=>s+(p.amount||0),0); });
 
-  let html = `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
-    <div class="month-pills" style="margin-bottom:0;flex:1;">
-      <button class="month-pill ${!paymentsMonthFilter?'active':''}" onclick="switchPaymentsMonth('all')">كل الشهور</button>
-      ${months.map(m => `<button class="month-pill ${paymentsMonthFilter===m?'active':''}" onclick="switchPaymentsMonth('${m}')">${monthLabel(m)}</button>`).join('')}
-    </div>
-    <div style="flex:none;width:180px;">
-      <input id="paymentsContactSearchInput" value="${escapeHtml(paymentsContactSearch)}" placeholder="🔍 رقم العميل / الأكونت"
-        style="font-size:12.5px;padding:8px 10px;"
-        onkeydown="if(event.key==='Enter') switchPaymentsContactSearch(this.value)"
-        onblur="switchPaymentsContactSearch(this.value)">
-    </div>
+  let html = `<div class="month-pills">
+    <button class="month-pill ${!paymentsMonthFilter?'active':''}" onclick="switchPaymentsMonth('all')">كل الشهور</button>
+    ${months.map(m => `<button class="month-pill ${paymentsMonthFilter===m?'active':''}" onclick="switchPaymentsMonth('${m}')">${monthLabel(m)}</button>`).join('')}
   </div>`;
 
   html += `<div class="calc-card" style="margin-bottom:16px;padding:14px 16px;">
