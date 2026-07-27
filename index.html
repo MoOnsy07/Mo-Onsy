@@ -247,13 +247,8 @@
     <input id="f_contactValue" list="clientContactList" placeholder="مثال: 201012345678">
     <datalist id="clientContactList"></datalist>
     <label>نوع الاشتراك</label>
-    <select id="f_service">
-      <option value="Shopify">Shopify</option>
-      <option value="Claude">Claude</option>
-      <option value="Gemini">Gemini</option>
-      <option value="ChatGPT">ChatGPT</option>
-      <option value="أخرى">أخرى</option>
-    </select>
+    <input id="f_service" list="serviceTypesList" placeholder="مثال: Shopify، أو أي خدمة جديدة">
+    <datalist id="serviceTypesList"></datalist>
     <label>تاريخ التجديد القادم</label>
     <input id="f_renewalDate" type="date">
     <label>مدة الاشتراك</label>
@@ -286,6 +281,8 @@
     <h2 id="paymentModalTitle">إضافة دفعة جديدة</h2>
     <label>وصف الخدمة</label>
     <input id="p_desc" list="serviceNamesList" placeholder="مثال: تصميم لوجو - متجر روزا">
+    <label>نوع الخدمة (عشان تجميع الربح)</label>
+    <input id="p_service" list="serviceTypesList" placeholder="مثال: Shopify، أو أي خدمة جديدة">
     <label>اسم العميل (اختياري)</label>
     <input id="p_client" placeholder="مثال: أحمد محمد">
     <label>وسيلة التواصل</label>
@@ -548,7 +545,8 @@ function toRemotePaymentShape(p){
     profit: p.profit || 0,
     received_method: p.receivedMethod || 'other',
     cost_amount: p.costAmount || 0,
-    cost_currency: p.costCurrency || 'EGP'
+    cost_currency: p.costCurrency || 'EGP',
+    service: p.service || 'أخرى'
   };
 }
 
@@ -565,7 +563,8 @@ function fromRemotePaymentShape(r){
     profit: r.profit || 0,
     receivedMethod: r.received_method || 'other',
     costAmount: r.cost_amount || 0,
-    costCurrency: r.cost_currency || 'EGP'
+    costCurrency: r.cost_currency || 'EGP',
+    service: r.service || 'أخرى'
   };
 }
 
@@ -1117,8 +1116,14 @@ function populateDatalists(){
     ...subs.map(s => s.contactValue),
     ...payments.map(p => p.contactValue)
   ].filter(Boolean))];
+  const serviceTypes = [...new Set([
+    'Shopify', 'Claude', 'Adobe', 'Gemini', 'ChatGPT',
+    ...subs.map(s => s.service),
+    ...payments.map(p => p.service)
+  ].filter(Boolean))];
   document.getElementById('serviceNamesList').innerHTML = services.map(v => `<option value="${escapeHtml(v)}">`).join('');
   document.getElementById('clientContactList').innerHTML = contacts.map(v => `<option value="${escapeHtml(v)}">`).join('');
+  document.getElementById('serviceTypesList').innerHTML = serviceTypes.map(v => `<option value="${escapeHtml(v)}">`).join('');
 }
 
 function openModal(sub){
@@ -1233,6 +1238,7 @@ async function handlePayConfirm(){
   payments.push({
     id: 'pay_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
     description: 'تجديد ' + sub.store,
+    service: sub.service || 'أخرى',
     client: sub.client || '',
     contactMethod: sub.contactMethod || 'whatsapp',
     contactValue: sub.contactValue || '',
@@ -1291,6 +1297,7 @@ function openPaymentModal(p){
   document.getElementById('paymentModalTitle').textContent = p ? 'تعديل دفعة' : 'إضافة دفعة جديدة';
   populateDatalists();
   document.getElementById('p_desc').value = p ? p.description : '';
+  document.getElementById('p_service').value = p ? (p.service || 'أخرى') : 'أخرى';
   document.getElementById('p_client').value = p ? (p.client || '') : '';
   document.getElementById('p_contactMethod').value = p ? (p.contactMethod || 'whatsapp') : 'whatsapp';
   document.getElementById('p_contactValue').value = p ? (p.contactValue || '') : '';
@@ -1351,6 +1358,7 @@ function receivedMethodLabel(m){
 
 async function handlePaymentSave(){
   const description = document.getElementById('p_desc').value.trim();
+  const service = document.getElementById('p_service').value;
   const client = document.getElementById('p_client').value.trim();
   const contactMethod = document.getElementById('p_contactMethod').value;
   const contactValue = document.getElementById('p_contactValue').value.trim();
@@ -1373,12 +1381,12 @@ async function handlePaymentSave(){
   if(editingPaymentId){
     const idx = payments.findIndex(p => p.id === editingPaymentId);
     if(idx > -1){
-      payments[idx] = {...payments[idx], description, client, contactMethod, contactValue, costAmount, costCurrency, amount, currency, receivedMethod, paidDate, profit};
+      payments[idx] = {...payments[idx], description, service, client, contactMethod, contactValue, costAmount, costCurrency, amount, currency, receivedMethod, paidDate, profit};
     }
   } else {
     payments.push({
       id: 'pay_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
-      description, client, contactMethod, contactValue, costAmount, costCurrency, amount, currency, receivedMethod, paidDate, profit
+      description, service, client, contactMethod, contactValue, costAmount, costCurrency, amount, currency, receivedMethod, paidDate, profit
     });
   }
   await savePayments();
@@ -2459,6 +2467,22 @@ function renderPaymentsTab(){
     </div>`).join('')}
   </div>`;
 
+  const serviceProfitMap = {};
+  filtered.forEach(p => {
+    const svc = p.service || 'أخرى';
+    serviceProfitMap[svc] = (serviceProfitMap[svc] || 0) + (p.profit || 0);
+  });
+  const serviceProfitEntries = Object.entries(serviceProfitMap).sort((a,b) => b[1]-a[1]);
+  if(serviceProfitEntries.length > 0){
+    html += `<div class="section-title">الربح حسب الخدمة <span class="count-pill">${serviceProfitEntries.length}</span></div>
+      <div class="cards" style="margin-bottom:20px;">
+        ${serviceProfitEntries.map(([svc, profit]) => `<div class="card" style="cursor:default;border-color:var(--mint);">
+          <p class="client" style="margin-bottom:6px;">${fmtService(svc)}</p>
+          <p class="store" style="font-size:18px;color:var(--mint);">${profit.toFixed(2)} ج.م</p>
+        </div>`).join('')}
+      </div>`;
+  }
+
   let sectionTitle = 'كل المدفوعات';
   if(paymentsMonthFilter) sectionTitle = 'دفعات ' + monthLabel(paymentsMonthFilter);
   else if(paymentsDateFrom || paymentsDateTo || paymentsSearchQuery) sectionTitle = 'نتائج الفلترة';
@@ -2467,11 +2491,12 @@ function renderPaymentsTab(){
     html += `<div class="empty">مفيش دفعات في الفترة دي. دوس على زرار (+) تحت عشان تضيف دفعة.</div>`;
   } else {
     html += `<table><thead><tr>
-      <th>الوصف</th><th>العميل</th><th>تواصل</th><th>قيمة المعاملة</th><th>المبلغ المستلم</th><th>طريقة الاستلام</th><th>الربح</th><th>التاريخ</th><th></th>
+      <th>الوصف</th><th>الخدمة</th><th>العميل</th><th>تواصل</th><th>قيمة المعاملة</th><th>المبلغ المستلم</th><th>طريقة الاستلام</th><th>الربح</th><th>التاريخ</th><th></th>
     </tr></thead><tbody>`;
     sorted.forEach(p => {
       html += `<tr>
         <td>${escapeHtml(p.description)}</td>
+        <td>${fmtService(p.service || 'أخرى')}</td>
         <td>${escapeHtml(p.client || '—')}</td>
         <td>${contactCellHtml(p)}</td>
         <td>${(p.costAmount||0).toFixed(2)} ${paymentCurrencyLabel(p.costCurrency||'EGP')}</td>
