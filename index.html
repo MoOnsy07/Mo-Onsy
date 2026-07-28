@@ -1858,7 +1858,6 @@ function tabBarHtml(){
     <button class="tab-btn ${activeTab==='subs'?'active':''}" onclick="switchTab('subs')">الاشتراكات</button>
     <button class="tab-btn ${activeTab==='payments'?'active':''}" onclick="switchTab('payments')">مدفوعات</button>
     <button class="tab-btn ${activeTab==='profit'?'active':''}" onclick="switchTab('profit')">الربح</button>
-    <button class="tab-btn ${activeTab==='ledger'?'active':''}" onclick="switchTab('ledger')">المصروف والإيراد</button>
     <button class="tab-btn ${activeTab==='clients'?'active':''}" onclick="switchTab('clients')">العملاء</button>
     <button class="tab-btn ${activeTab==='invoices'?'active':''}" onclick="switchTab('invoices')">الفواتير</button>
   </div>`;
@@ -1882,12 +1881,6 @@ function render(){
   } else if(activeTab === 'profit'){
     fab.style.display = 'none';
     html += renderProfitTab();
-  } else if(activeTab === 'ledger'){
-    fab.style.display = 'flex';
-    fab.title = 'إضافة معاملة';
-    fab.innerHTML = '+ إضافة معاملة';
-    fab.onclick = () => openTxModal(null);
-    html += renderLedgerTab();
   } else if(activeTab === 'clients'){
     fab.style.display = 'none';
     html += renderClientsTab();
