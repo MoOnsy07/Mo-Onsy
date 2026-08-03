@@ -416,6 +416,20 @@
   </div>
 </div>
 
+<div class="modal-bg" id="serviceRenameModalBg">
+  <div class="modal">
+    <h2 id="serviceRenameTitle">تعديل اسم الخدمة</h2>
+    <p style="color:var(--muted);font-size:13px;margin:0 0 14px;">هيتغيّر الاسم في كل الاشتراكات والمدفوعات المرتبطة بالخدمة دي.</p>
+    <label>الاسم الجديد</label>
+    <input id="serviceRenameInput" placeholder="مثال: Shopify">
+    <p id="serviceRenameError" style="color:var(--red);font-size:12.5px;margin:10px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="serviceRenameCancelBtn">إلغاء</button>
+      <button class="btn btn-primary" id="serviceRenameSaveBtn">حفظ</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="payConfirmModalBg">
   <div class="modal">
     <h2 id="payConfirmTitle">تسجيل الدفع</h2>
@@ -1858,6 +1872,7 @@ function tabBarHtml(){
     <button class="tab-btn ${activeTab==='subs'?'active':''}" onclick="switchTab('subs')">الاشتراكات</button>
     <button class="tab-btn ${activeTab==='payments'?'active':''}" onclick="switchTab('payments')">مدفوعات</button>
     <button class="tab-btn ${activeTab==='profit'?'active':''}" onclick="switchTab('profit')">الربح</button>
+    <button class="tab-btn ${activeTab==='services'?'active':''}" onclick="switchTab('services')">الخدمات</button>
     <button class="tab-btn ${activeTab==='clients'?'active':''}" onclick="switchTab('clients')">العملاء</button>
     <button class="tab-btn ${activeTab==='invoices'?'active':''}" onclick="switchTab('invoices')">الفواتير</button>
   </div>`;
@@ -1881,6 +1896,9 @@ function render(){
   } else if(activeTab === 'profit'){
     fab.style.display = 'none';
     html += renderProfitTab();
+  } else if(activeTab === 'services'){
+    fab.style.display = 'none';
+    html += renderServicesTab();
   } else if(activeTab === 'clients'){
     fab.style.display = 'none';
     html += renderClientsTab();
@@ -2396,6 +2414,120 @@ function switchProfitMonth(val){
   render();
 }
 
+/* ====== تبويب الخدمات (ملخص كل خدمة + تعديل الاسم أو حذفها) ====== */
+let renamingServiceOld = null;
+let pendingDeleteServiceName = null;
+
+function buildServicesSummary(){
+  const names = new Set();
+  subs.forEach(s => { if(s.service) names.add(s.service); });
+  payments.forEach(p => { if(p.service) names.add(p.service); });
+
+  return [...names].map(name => {
+    const svcPayments = payments.filter(p => p.service === name);
+    const received = svcPayments.filter(p=>p.currency==='EGP').reduce((s,p)=>s+(p.amount||0),0);
+    const spent = svcPayments.reduce((s,p)=>{
+      const c = p.costAmount || 0;
+      if((p.costCurrency||'EGP') === 'EGP') return s + c;
+      const rate = liveUsdRate; // تقريبي بسعر الدولار الحالي لأي عملة غير الجنيه
+      return s + (rate ? c * rate : 0);
+    }, 0);
+    const profit = svcPayments.reduce((s,p)=>s+(p.profit||0),0);
+    const activeSubsCount = subs.filter(s => s.service === name && !s.cancelled).length;
+    return { name, received, spent, profit, activeSubsCount, paymentsCount: svcPayments.length };
+  }).sort((a,b) => b.profit - a.profit);
+}
+
+function renderServicesTab(){
+  const services = buildServicesSummary();
+  let html = `<p class="sub">ملخص كل خدمة على حدة: المستلم، المصروف، والربح</p>`;
+
+  if(services.length === 0){
+    html += `<div class="empty">لسه مفيش خدمات مسجّلة في اشتراكات أو مدفوعات.</div>`;
+    return html;
+  }
+
+  html += `<div class="cards">`;
+  services.forEach(svc => {
+    html += `<div class="card" style="cursor:default;">
+      <p class="store">${fmtService(svc.name)}</p>
+      <p class="client" style="margin-bottom:10px;">${svc.activeSubsCount} اشتراك نشط &middot; ${svc.paymentsCount} دفعة</p>
+      <div class="result-box" style="margin-top:0;">
+        <div class="result-line"><span>المستلم</span><span>${svc.received.toFixed(2)} ج.م</span></div>
+        <div class="result-line"><span>المصروف</span><span>${svc.spent.toFixed(2)} ج.م</span></div>
+        <div class="result-line total" style="color:var(--mint);"><span>الربح</span><span>${svc.profit.toFixed(2)} ج.م</span></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button class="btn btn-ghost" style="flex:1;padding:8px;font-size:12.5px;" onclick="openServiceRenameModal('${encodeURIComponent(svc.name)}')">تعديل الاسم</button>
+        ${pendingDeleteServiceName === svc.name ? `
+          <button class="btn" style="flex:1;padding:8px;font-size:12.5px;background:var(--red-dim);color:var(--red);" onclick="deleteService('${encodeURIComponent(svc.name)}')">تأكيد الحذف</button>
+          <button class="btn btn-ghost" style="flex:none;padding:8px 10px;font-size:12.5px;" onclick="cancelDeleteService()">↩</button>
+        ` : `<button class="btn btn-ghost" style="flex:1;padding:8px;font-size:12.5px;" onclick="deleteService('${encodeURIComponent(svc.name)}')">حذف</button>`}
+      </div>
+    </div>`;
+  });
+  html += `</div>`;
+  return html;
+}
+
+function openServiceRenameModal(encodedName){
+  const name = decodeURIComponent(encodedName);
+  renamingServiceOld = name;
+  document.getElementById('serviceRenameTitle').textContent = 'تعديل اسم: ' + name;
+  document.getElementById('serviceRenameInput').value = name;
+  document.getElementById('serviceRenameError').style.display = 'none';
+  document.getElementById('serviceRenameModalBg').classList.add('open');
+}
+function closeServiceRenameModal(){
+  document.getElementById('serviceRenameModalBg').classList.remove('open');
+}
+
+async function handleServiceRenameSave(){
+  const newName = document.getElementById('serviceRenameInput').value.trim();
+  const errEl = document.getElementById('serviceRenameError');
+  if(!newName){
+    errEl.textContent = 'اكتب اسم صحيح';
+    errEl.style.display = 'block';
+    return;
+  }
+  errEl.style.display = 'none';
+
+  let changedSubs = false, changedPayments = false;
+  subs.forEach(s => { if(s.service === renamingServiceOld){ s.service = newName; changedSubs = true; } });
+  payments.forEach(p => { if(p.service === renamingServiceOld){ p.service = newName; changedPayments = true; } });
+
+  if(changedSubs) await saveData();
+  if(changedPayments) await savePayments();
+
+  closeServiceRenameModal();
+  render();
+  showToast('اتغيّر اسم الخدمة في كل حاجة مرتبطة بيها ✓');
+}
+
+async function deleteService(encodedName){
+  const name = decodeURIComponent(encodedName);
+  if(pendingDeleteServiceName !== name){
+    pendingDeleteServiceName = name;
+    render();
+    return;
+  }
+  pendingDeleteServiceName = null;
+
+  let changedSubs = false, changedPayments = false;
+  subs.forEach(s => { if(s.service === name){ s.service = 'أخرى'; changedSubs = true; } });
+  payments.forEach(p => { if(p.service === name){ p.service = 'أخرى'; changedPayments = true; } });
+
+  if(changedSubs) await saveData();
+  if(changedPayments) await savePayments();
+
+  render();
+  showToast('اتحذفت الخدمة، والاشتراكات/المدفوعات المرتبطة بيها اتنقلت لـ"أخرى"');
+}
+function cancelDeleteService(){
+  pendingDeleteServiceName = null;
+  render();
+}
+
 function renderProfitTab(){
   const months = getAvailableMonths(payments, 'paidDate');
   const filtered = profitMonthFilter
@@ -2783,6 +2915,11 @@ document.getElementById('invoiceCancelBtn').addEventListener('click', closeInvoi
 document.getElementById('invoiceSaveBtn').addEventListener('click', handleInvoiceSave);
 document.getElementById('invoiceModalBg').addEventListener('click', (e) => {
   if(e.target.id === 'invoiceModalBg') closeInvoiceModal();
+});
+document.getElementById('serviceRenameCancelBtn').addEventListener('click', closeServiceRenameModal);
+document.getElementById('serviceRenameSaveBtn').addEventListener('click', handleServiceRenameSave);
+document.getElementById('serviceRenameModalBg').addEventListener('click', (e) => {
+  if(e.target.id === 'serviceRenameModalBg') closeServiceRenameModal();
 });
 document.getElementById('payConfirmCancelBtn').addEventListener('click', closePayConfirmModal);
 document.getElementById('payConfirmBtn').addEventListener('click', handlePayConfirm);
