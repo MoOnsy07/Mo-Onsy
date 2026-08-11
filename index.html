@@ -209,6 +209,17 @@
     border-top:1px solid var(--border);margin-top:8px;padding-top:12px;
     font-size:17px;font-weight:800;color:var(--mint);font-family:'Cairo',sans-serif;
   }
+  .print-only{ display:none; }
+
+  @media print{
+    body *{ visibility:hidden; }
+    #mallPrintArea, #mallPrintArea *{ visibility:visible; }
+    #mallPrintArea{ position:absolute; top:0; right:0; left:0; }
+    .print-only{ display:block !important; }
+    .no-print{ display:none !important; }
+    table{ width:100%; border-collapse:collapse; }
+    th,td{ border:1px solid #999; padding:6px 8px; color:#000 !important; }
+  }
 </style>
 </head>
 <body>
@@ -430,6 +441,25 @@
   </div>
 </div>
 
+<div class="modal-bg" id="mallModalBg">
+  <div class="modal">
+    <h2>إضافة فاتورة مورد</h2>
+    <label>اسم المورد</label>
+    <input id="mall_supplier" list="mallSuppliersList" placeholder="مثال: شركة النور للتوريدات">
+    <datalist id="mallSuppliersList"></datalist>
+    <label>رقم الفاتورة</label>
+    <input id="mall_invoiceNumber" placeholder="مثال: 4521">
+    <label>الإجمالي</label>
+    <input id="mall_total" type="number" step="0.01" placeholder="مثال: 3500">
+    <p style="color:var(--muted);font-size:12px;margin:12px 0 0;">التاريخ واليوم بيتسجلوا تلقائي وقت الحفظ.</p>
+    <p id="mallFormError" style="color:var(--red);font-size:12.5px;margin:10px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mallCancelBtn">إلغاء</button>
+      <button class="btn btn-primary" id="mallSaveBtn">حفظ</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="payConfirmModalBg">
   <div class="modal">
     <h2 id="payConfirmTitle">تسجيل الدفع</h2>
@@ -470,6 +500,8 @@ let editingInvoiceId = null;
 let pendingDeleteInvoiceId = null;
 let payConfirmSubId = null;
 let invoicesSearchQuery = '';
+let mallInvoices = [];
+let pendingDeleteMallId = null;
 let editingPaymentId = null;
 let editingTxId = null;
 let activeTab = 'subs';
@@ -631,6 +663,13 @@ function toRemoteInvoiceShape(inv){
 }
 function fromRemoteInvoiceShape(r){
   return { id: r.id, description: r.description, amount: r.amount || 0, status: r.status || 'pending', number: r.number || '' };
+}
+
+function toRemoteMallShape(m){
+  return { id: m.id, supplier: m.supplier, invoice_number: m.invoiceNumber || null, total: m.total || 0, date: m.date };
+}
+function fromRemoteMallShape(r){
+  return { id: r.id, supplier: r.supplier, invoiceNumber: r.invoice_number || '', total: r.total || 0, date: r.date };
 }
 
 
@@ -852,6 +891,7 @@ async function loadData(){
   await loadVaultMeta();
   await loadDebtors();
   await loadInvoices();
+  await loadMallInvoices();
   fetchLiveRate();
   render();
 }
@@ -1045,6 +1085,47 @@ async function deleteRemoteInvoiceRow(id){
     });
   }catch(e){
     console.error('delete invoice error', e);
+    showToast('حصل خطأ في الحذف', true);
+  }
+}
+
+async function loadMallInvoices(){
+  if(!isConfigured()) return;
+  try{
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/mall_invoices?select=*`, { headers: sbHeaders() });
+    if(!res.ok) throw new Error('fetch failed: ' + res.status);
+    const rows = await res.json();
+    mallInvoices = rows.map(fromRemoteMallShape);
+  }catch(e){
+    console.error('load mall invoices error', e);
+    showToast('حصل خطأ في تحميل فواتير المول (اتأكدت من إنشاء جدول mall_invoices؟)', true);
+    mallInvoices = [];
+  }
+}
+
+async function saveMallInvoices(){
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/mall_invoices`, {
+      method: 'POST',
+      headers: sbHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify(mallInvoices.map(toRemoteMallShape))
+    });
+  }catch(e){
+    console.error('save mall invoices error', e);
+    showToast('حصل خطأ في حفظ الفاتورة', true);
+  }
+}
+
+async function deleteRemoteMallRow(id){
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/mall_invoices?id=eq.${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: sbHeaders()
+    });
+  }catch(e){
+    console.error('delete mall invoice error', e);
     showToast('حصل خطأ في الحذف', true);
   }
 }
@@ -1875,6 +1956,7 @@ function tabBarHtml(){
     <button class="tab-btn ${activeTab==='services'?'active':''}" onclick="switchTab('services')">الخدمات</button>
     <button class="tab-btn ${activeTab==='clients'?'active':''}" onclick="switchTab('clients')">العملاء</button>
     <button class="tab-btn ${activeTab==='invoices'?'active':''}" onclick="switchTab('invoices')">الفواتير</button>
+    <button class="tab-btn ${activeTab==='mall'?'active':''}" onclick="switchTab('mall')">المول</button>
   </div>`;
 }
 
@@ -1908,6 +1990,12 @@ function render(){
     fab.innerHTML = '+ إضافة فاتورة';
     fab.onclick = () => openInvoiceModal(null);
     html += renderInvoicesTab();
+  } else if(activeTab === 'mall'){
+    fab.style.display = 'flex';
+    fab.title = 'إضافة فاتورة مورد';
+    fab.innerHTML = '+ إضافة فاتورة';
+    fab.onclick = () => openMallModal();
+    html += renderMallTab();
   } else {
     activeTab = 'subs';
     fab.style.display = 'flex';
@@ -2346,6 +2434,128 @@ function invoiceCardHtml(inv){
       ` : `<button class="btn btn-ghost" style="flex:1;padding:6px;font-size:12px;" onclick="deleteInvoice('${inv.id}')">حذف</button>`}
     </div>
   </div>`;
+}
+
+/* ====== المول (تقرير تسليم فواتير موردين، مستقل تمامًا) ====== */
+function arabicDayName(dateStr){
+  const days = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+  const [y,m,d] = dateStr.split('-').map(Number);
+  return days[new Date(y, m-1, d).getDay()];
+}
+
+function populateMallSuppliersList(){
+  const suppliers = [...new Set(mallInvoices.map(m => m.supplier).filter(Boolean))];
+  document.getElementById('mallSuppliersList').innerHTML = suppliers.map(v => `<option value="${escapeHtml(v)}">`).join('');
+}
+
+function openMallModal(){
+  document.getElementById('mall_supplier').value = '';
+  document.getElementById('mall_invoiceNumber').value = '';
+  document.getElementById('mall_total').value = '';
+  document.getElementById('mallFormError').style.display = 'none';
+  populateMallSuppliersList();
+  document.getElementById('mallModalBg').classList.add('open');
+}
+function closeMallModal(){
+  document.getElementById('mallModalBg').classList.remove('open');
+}
+
+async function handleMallSave(){
+  const supplier = document.getElementById('mall_supplier').value.trim();
+  const invoiceNumber = document.getElementById('mall_invoiceNumber').value.trim();
+  const total = parseFloat(document.getElementById('mall_total').value) || 0;
+
+  const errEl = document.getElementById('mallFormError');
+  if(!supplier || !total){
+    errEl.textContent = 'اكتب اسم المورد ومبلغ إجمالي صحيح';
+    errEl.style.display = 'block';
+    return;
+  }
+  errEl.style.display = 'none';
+
+  mallInvoices.push({
+    id: 'mall_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+    supplier, invoiceNumber, total,
+    date: new Date().toISOString().slice(0,10)
+  });
+  await saveMallInvoices();
+  closeMallModal();
+  render();
+  showToast('تم تسجيل الفاتورة');
+}
+
+async function deleteMallInvoice(id){
+  if(pendingDeleteMallId !== id){
+    pendingDeleteMallId = id;
+    render();
+    return;
+  }
+  pendingDeleteMallId = null;
+  mallInvoices = mallInvoices.filter(m => m.id !== id);
+  await deleteRemoteMallRow(id);
+  render();
+  showToast('تم حذف الفاتورة');
+}
+function cancelDeleteMall(){
+  pendingDeleteMallId = null;
+  render();
+}
+
+function printMallReport(){
+  window.print();
+}
+
+function renderMallTab(){
+  const sorted = [...mallInvoices].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+  const total = mallInvoices.reduce((s,m)=>s+(m.total||0),0);
+
+  let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
+
+  html += `<div style="display:flex;gap:10px;margin-bottom:20px;" class="no-print">
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="printMallReport()">🖨 طباعة التقرير</button>
+  </div>`;
+
+  html += `<div class="cards" style="margin-bottom:22px;">
+    <div class="card" style="cursor:default;">
+      <p class="client" style="margin-bottom:6px;">عدد الفواتير</p>
+      <p class="store" style="font-size:22px;">${mallInvoices.length}</p>
+    </div>
+    <div class="card" style="cursor:default;border-color:var(--mint);">
+      <p class="client" style="margin-bottom:6px;">إجمالي الفواتير</p>
+      <p class="store" style="font-size:22px;color:var(--mint);">${total.toFixed(2)}</p>
+    </div>
+  </div>`;
+
+  html += `<div id="mallPrintArea">
+    <h2 style="font-family:'Cairo',sans-serif;font-size:18px;margin:0 0 14px;display:none;" class="print-only">تقرير تسليم فواتير الموردين — المول</h2>`;
+
+  if(mallInvoices.length === 0){
+    html += `<div class="empty">لسه معملتش فواتير. دوس على زرار (+) تحت عشان تضيف أول فاتورة.</div>`;
+  } else {
+    html += `<table><thead><tr>
+      <th>المورد</th><th>رقم الفاتورة</th><th>الإجمالي</th><th>التاريخ</th><th>اليوم</th><th class="no-print"></th>
+    </tr></thead><tbody>`;
+    sorted.forEach(m => {
+      html += `<tr>
+        <td>${escapeHtml(m.supplier)}</td>
+        <td>${escapeHtml(m.invoiceNumber || '—')}</td>
+        <td>${(m.total||0).toFixed(2)}</td>
+        <td>${m.date}</td>
+        <td>${arabicDayName(m.date)}</td>
+        <td class="no-print">
+          <div class="row-actions">
+            ${pendingDeleteMallId === m.id ? `
+              <button class="icon-btn" style="background:var(--red-dim);color:var(--red);border-color:var(--red);font-size:11px;width:auto;padding:0 8px;" onclick="deleteMallInvoice('${m.id}')" title="اضغط للتأكيد">تأكيد الحذف</button>
+              <button class="icon-btn" onclick="cancelDeleteMall()" title="إلغاء">↩</button>
+            ` : `<button class="icon-btn" onclick="deleteMallInvoice('${m.id}')" title="حذف">✕</button>`}
+          </div>
+        </td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+  html += `</div>`;
+  return html;
 }
 
 function renderInvoicesTab(){
@@ -2920,6 +3130,11 @@ document.getElementById('serviceRenameCancelBtn').addEventListener('click', clos
 document.getElementById('serviceRenameSaveBtn').addEventListener('click', handleServiceRenameSave);
 document.getElementById('serviceRenameModalBg').addEventListener('click', (e) => {
   if(e.target.id === 'serviceRenameModalBg') closeServiceRenameModal();
+});
+document.getElementById('mallCancelBtn').addEventListener('click', closeMallModal);
+document.getElementById('mallSaveBtn').addEventListener('click', handleMallSave);
+document.getElementById('mallModalBg').addEventListener('click', (e) => {
+  if(e.target.id === 'mallModalBg') closeMallModal();
 });
 document.getElementById('payConfirmCancelBtn').addEventListener('click', closePayConfirmModal);
 document.getElementById('payConfirmBtn').addEventListener('click', handlePayConfirm);
