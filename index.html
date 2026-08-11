@@ -213,12 +213,12 @@
 
   @media print{
     body *{ visibility:hidden; }
-    #mallPrintArea, #mallPrintArea *{ visibility:visible; }
+    #mallPrintArea, #mallPrintArea *{ visibility:visible; color:#000 !important; }
     #mallPrintArea{ position:absolute; top:0; right:0; left:0; }
     .print-only{ display:block !important; }
     .no-print{ display:none !important; }
     table{ width:100%; border-collapse:collapse; }
-    th,td{ border:1px solid #999; padding:6px 8px; color:#000 !important; }
+    th,td{ border:1px solid #999; padding:6px 8px; }
   }
 </style>
 </head>
@@ -2505,6 +2505,11 @@ function printMallReport(){
   window.print();
 }
 
+function formatNumber(n){
+  n = n || 0;
+  return Number.isInteger(n) ? n.toString() : parseFloat(n.toFixed(2)).toString();
+}
+
 function renderMallTab(){
   const sorted = [...mallInvoices].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
   const total = mallInvoices.reduce((s,m)=>s+(m.total||0),0);
@@ -2522,7 +2527,7 @@ function renderMallTab(){
     </div>
     <div class="card" style="cursor:default;border-color:var(--mint);">
       <p class="client" style="margin-bottom:6px;">إجمالي الفواتير</p>
-      <p class="store" style="font-size:22px;color:var(--mint);">${total.toFixed(2)}</p>
+      <p class="store" style="font-size:22px;color:var(--mint);">${formatNumber(total)}</p>
     </div>
   </div>`;
 
@@ -2539,7 +2544,7 @@ function renderMallTab(){
       html += `<tr>
         <td>${escapeHtml(m.supplier)}</td>
         <td>${escapeHtml(m.invoiceNumber || '—')}</td>
-        <td>${(m.total||0).toFixed(2)}</td>
+        <td>${formatNumber(m.total)}</td>
         <td>${m.date}</td>
         <td>${arabicDayName(m.date)}</td>
         <td class="no-print">
@@ -2553,6 +2558,13 @@ function renderMallTab(){
       </tr>`;
     });
     html += `</tbody></table>`;
+
+    html += `<div style="margin-top:44px;display:flex;justify-content:flex-start;">
+      <div style="min-width:260px;">
+        <p style="font-size:13.5px;color:var(--muted);margin:0 0 34px;">توقيع الحسابات بالاستلام:</p>
+        <div style="border-top:1px solid var(--ink);width:220px;"></div>
+      </div>
+    </div>`;
   }
   html += `</div>`;
   return html;
