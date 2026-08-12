@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>متابعة الاشتراكات</title>
+<title>Mo Onsy</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0F1420">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="الاشتراكات">
+<meta name="apple-mobile-web-app-title" content="Mo Onsy">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -451,6 +451,13 @@
     <input id="mall_invoiceNumber" placeholder="مثال: 4521">
     <label>الإجمالي</label>
     <input id="mall_total" type="number" step="0.01" placeholder="مثال: 3500">
+    <label style="display:flex;align-items:center;gap:8px;margin-top:14px;cursor:pointer;">
+      <input type="checkbox" id="mall_hasReturn" style="width:auto;">
+      يوجد مرتجع في الفاتورة دي
+    </label>
+    <label>صورة الفاتورة (اختياري)</label>
+    <input id="mall_image" type="file" accept="image/*" capture="environment">
+    <p id="mallImageStatus" style="color:var(--muted);font-size:12px;margin:6px 0 0;display:none;"></p>
     <p style="color:var(--muted);font-size:12px;margin:12px 0 0;">التاريخ واليوم بيتسجلوا تلقائي وقت الحفظ.</p>
     <p id="mallFormError" style="color:var(--red);font-size:12.5px;margin:10px 0 0;display:none;"></p>
     <div class="modal-actions">
@@ -501,6 +508,7 @@ let pendingDeleteInvoiceId = null;
 let payConfirmSubId = null;
 let invoicesSearchQuery = '';
 let mallInvoices = [];
+let mallViewReportNo = 'open'; // 'open' = التقرير الحالي اللي لسه ما اتقفلش، أو رقم تقرير مقفول
 let pendingDeleteMallId = null;
 let editingPaymentId = null;
 let editingTxId = null;
@@ -666,10 +674,22 @@ function fromRemoteInvoiceShape(r){
 }
 
 function toRemoteMallShape(m){
-  return { id: m.id, supplier: m.supplier, invoice_number: m.invoiceNumber || null, total: m.total || 0, date: m.date };
+  return {
+    id: m.id, supplier: m.supplier, invoice_number: m.invoiceNumber || null,
+    total: m.total || 0, date: m.date,
+    has_return: !!m.hasReturn,
+    report_no: m.reportNo || null,
+    image_url: m.imageUrl || null
+  };
 }
 function fromRemoteMallShape(r){
-  return { id: r.id, supplier: r.supplier, invoiceNumber: r.invoice_number || '', total: r.total || 0, date: r.date };
+  return {
+    id: r.id, supplier: r.supplier, invoiceNumber: r.invoice_number || '',
+    total: r.total || 0, date: r.date,
+    hasReturn: !!r.has_return,
+    reportNo: r.report_no || null,
+    imageUrl: r.image_url || null
+  };
 }
 
 
@@ -1964,7 +1984,7 @@ function render(){
   const app = document.getElementById('app');
   const fab = document.getElementById('addBtn');
 
-  let html = `<h1>لوحة إدارة الاشتراكات</h1>`;
+  let html = `<h1>Mo Onsy</h1>`;
   html += rateBarHtml();
   html += vaultBarHtml();
   html += tabBarHtml();
@@ -2452,6 +2472,9 @@ function openMallModal(){
   document.getElementById('mall_supplier').value = '';
   document.getElementById('mall_invoiceNumber').value = '';
   document.getElementById('mall_total').value = '';
+  document.getElementById('mall_hasReturn').checked = false;
+  document.getElementById('mall_image').value = '';
+  document.getElementById('mallImageStatus').style.display = 'none';
   document.getElementById('mallFormError').style.display = 'none';
   populateMallSuppliersList();
   document.getElementById('mallModalBg').classList.add('open');
@@ -2460,10 +2483,51 @@ function closeMallModal(){
   document.getElementById('mallModalBg').classList.remove('open');
 }
 
+/* بتضغط الصورة (تصغير الأبعاد + جودة JPEG أقل) قبل الرفع عشان توفّر مساحة تخزين Supabase */
+function compressImage(file, maxDim, quality){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = (e) => { img.src = e.target.result; };
+    reader.onerror = reject;
+    img.onload = () => {
+      let { width, height } = img;
+      if(width > height && width > maxDim){ height = Math.round(height * (maxDim/width)); width = maxDim; }
+      else if(height > maxDim){ width = Math.round(width * (maxDim/height)); height = maxDim; }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      canvas.toBlob(blob => resolve(blob), 'image/jpeg', quality);
+    };
+    img.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadMallImage(blob, invoiceId){
+  if(!isConfigured()) return null;
+  const path = `mall/${invoiceId}.jpg`;
+  try{
+    const res = await fetch(`${SUPABASE_URL}/storage/v1/object/mall-invoices/${path}`, {
+      method: 'POST',
+      headers: sbHeaders({ 'Content-Type': 'image/jpeg', 'x-upsert': 'true' }),
+      body: blob
+    });
+    if(!res.ok) throw new Error('upload failed: ' + res.status);
+    return `${SUPABASE_URL}/storage/v1/object/public/mall-invoices/${path}`;
+  }catch(e){
+    console.error('mall image upload error', e);
+    showToast('حصل خطأ في رفع الصورة، بس الفاتورة اتسجلت من غيرها', true);
+    return null;
+  }
+}
+
 async function handleMallSave(){
   const supplier = document.getElementById('mall_supplier').value.trim();
   const invoiceNumber = document.getElementById('mall_invoiceNumber').value.trim();
   const total = parseFloat(document.getElementById('mall_total').value) || 0;
+  const hasReturn = document.getElementById('mall_hasReturn').checked;
+  const imageFile = document.getElementById('mall_image').files[0];
 
   const errEl = document.getElementById('mallFormError');
   if(!supplier || !total){
@@ -2473,11 +2537,29 @@ async function handleMallSave(){
   }
   errEl.style.display = 'none';
 
-  mallInvoices.push({
+  const newInvoice = {
     id: 'mall_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
-    supplier, invoiceNumber, total,
-    date: new Date().toISOString().slice(0,10)
-  });
+    supplier, invoiceNumber, total, hasReturn,
+    date: new Date().toISOString().slice(0,10),
+    reportNo: null,
+    imageUrl: null
+  };
+
+  if(imageFile){
+    const statusEl = document.getElementById('mallImageStatus');
+    statusEl.textContent = 'جاري ضغط ورفع الصورة...';
+    statusEl.style.display = 'block';
+    try{
+      const compressed = await compressImage(imageFile, 1400, 0.7);
+      const url = await uploadMallImage(compressed, newInvoice.id);
+      newInvoice.imageUrl = url;
+    }catch(e){
+      console.error('compress error', e);
+      showToast('مقدرش أضغط الصورة، اتسجلت الفاتورة من غيرها', true);
+    }
+  }
+
+  mallInvoices.push(newInvoice);
   await saveMallInvoices();
   closeMallModal();
   render();
@@ -2510,20 +2592,50 @@ function formatNumber(n){
   return Number.isInteger(n) ? n.toString() : parseFloat(n.toFixed(2)).toString();
 }
 
+function switchMallReportView(val){
+  mallViewReportNo = val === 'open' ? 'open' : parseInt(val, 10);
+  render();
+}
+
+async function closeMallReport(){
+  const openInvoices = mallInvoices.filter(m => !m.reportNo);
+  if(openInvoices.length === 0){
+    showToast('مفيش فواتير في التقرير الحالي عشان تقفله', true);
+    return;
+  }
+  const existingNumbers = mallInvoices.map(m => m.reportNo).filter(Boolean);
+  const nextNo = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
+  openInvoices.forEach(m => { m.reportNo = nextNo; });
+  await saveMallInvoices();
+  mallViewReportNo = 'open';
+  render();
+  showToast(`تم إغلاق التقرير رقم ${nextNo} — أي فاتورة جديدة هتبقى في تقرير جديد`);
+}
+
 function renderMallTab(){
-  const sorted = [...mallInvoices].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
-  const total = mallInvoices.reduce((s,m)=>s+(m.total||0),0);
+  const closedReportNumbers = [...new Set(mallInvoices.map(m => m.reportNo).filter(Boolean))].sort((a,b)=>b-a);
+  const filtered = mallViewReportNo === 'open'
+    ? mallInvoices.filter(m => !m.reportNo)
+    : mallInvoices.filter(m => m.reportNo === mallViewReportNo);
+  const sorted = [...filtered].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+  const total = filtered.reduce((s,m)=>s+(m.total||0),0);
 
   let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
 
-  html += `<div style="display:flex;gap:10px;margin-bottom:20px;" class="no-print">
-    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="printMallReport()">🖨 طباعة التقرير</button>
+  html += `<div class="month-pills no-print">
+    <button class="month-pill ${mallViewReportNo==='open'?'active':''}" onclick="switchMallReportView('open')">التقرير الحالي (لسه مفتوح)</button>
+    ${closedReportNumbers.map(n => `<button class="month-pill ${mallViewReportNo===n?'active':''}" onclick="switchMallReportView('${n}')">تقرير رقم ${n}</button>`).join('')}
+  </div>`;
+
+  html += `<div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;" class="no-print">
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="printMallReport()">🖨 طباعة التقرير ده</button>
+    ${mallViewReportNo === 'open' ? `<button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="closeMallReport()">🔒 إغلاق التقرير الحالي وابدأ تقرير جديد</button>` : ''}
   </div>`;
 
   html += `<div class="cards" style="margin-bottom:22px;">
     <div class="card" style="cursor:default;">
-      <p class="client" style="margin-bottom:6px;">عدد الفواتير</p>
-      <p class="store" style="font-size:22px;">${mallInvoices.length}</p>
+      <p class="client" style="margin-bottom:6px;">عدد الفواتير ${mallViewReportNo==='open' ? '(الحالي)' : '(تقرير ' + mallViewReportNo + ')'}</p>
+      <p class="store" style="font-size:22px;">${filtered.length}</p>
     </div>
     <div class="card" style="cursor:default;border-color:var(--mint);">
       <p class="client" style="margin-bottom:6px;">إجمالي الفواتير</p>
@@ -2532,19 +2644,21 @@ function renderMallTab(){
   </div>`;
 
   html += `<div id="mallPrintArea">
-    <h2 style="font-family:'Cairo',sans-serif;font-size:18px;margin:0 0 14px;display:none;" class="print-only">تقرير تسليم فواتير الموردين — المول</h2>`;
+    <h2 style="font-family:'Cairo',sans-serif;font-size:18px;margin:0 0 14px;display:none;" class="print-only">تقرير تسليم فواتير الموردين — المول ${mallViewReportNo!=='open' ? '(رقم '+mallViewReportNo+')' : ''}</h2>`;
 
-  if(mallInvoices.length === 0){
-    html += `<div class="empty">لسه معملتش فواتير. دوس على زرار (+) تحت عشان تضيف أول فاتورة.</div>`;
+  if(filtered.length === 0){
+    html += `<div class="empty">مفيش فواتير في التقرير ده. ${mallViewReportNo==='open' ? 'دوس على زرار (+) تحت عشان تضيف أول فاتورة.' : ''}</div>`;
   } else {
     html += `<table><thead><tr>
-      <th>المورد</th><th>رقم الفاتورة</th><th>الإجمالي</th><th>التاريخ</th><th>اليوم</th><th class="no-print"></th>
+      <th>المورد</th><th>رقم الفاتورة</th><th>الإجمالي</th><th>مرتجع</th><th>صورة</th><th>التاريخ</th><th>اليوم</th><th class="no-print"></th>
     </tr></thead><tbody>`;
     sorted.forEach(m => {
       html += `<tr>
         <td>${escapeHtml(m.supplier)}</td>
         <td>${escapeHtml(m.invoiceNumber || '—')}</td>
         <td>${formatNumber(m.total)}</td>
+        <td>${m.hasReturn ? '<span style="color:var(--red);font-weight:600;">يوجد</span>' : '<span style="color:var(--muted);">لا يوجد</span>'}</td>
+        <td class="no-print">${m.imageUrl ? `<a href="${m.imageUrl}" target="_blank" rel="noopener" style="color:var(--mint);">عرض 🖼</a>` : '—'}</td>
         <td>${m.date}</td>
         <td>${arabicDayName(m.date)}</td>
         <td class="no-print">

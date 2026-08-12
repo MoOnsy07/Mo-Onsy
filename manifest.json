@@ -1,6 +1,6 @@
 {
-  "name": "متابعة الاشتراكات",
-  "short_name": "الاشتراكات",
+  "name": "Mo Onsy",
+  "short_name": "Mo Onsy",
   "description": "متابعة اشتراكات المتاجر ومدفوعات العملاء",
   "start_url": "./index.html",
   "scope": "./",
