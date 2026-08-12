@@ -455,9 +455,6 @@
       <input type="checkbox" id="mall_hasReturn" style="width:auto;">
       يوجد مرتجع في الفاتورة دي
     </label>
-    <label>صورة الفاتورة (اختياري)</label>
-    <input id="mall_image" type="file" accept="image/*" capture="environment">
-    <p id="mallImageStatus" style="color:var(--muted);font-size:12px;margin:6px 0 0;display:none;"></p>
     <p style="color:var(--muted);font-size:12px;margin:12px 0 0;">التاريخ واليوم بيتسجلوا تلقائي وقت الحفظ.</p>
     <p id="mallFormError" style="color:var(--red);font-size:12.5px;margin:10px 0 0;display:none;"></p>
     <div class="modal-actions">
@@ -2473,8 +2470,6 @@ function openMallModal(){
   document.getElementById('mall_invoiceNumber').value = '';
   document.getElementById('mall_total').value = '';
   document.getElementById('mall_hasReturn').checked = false;
-  document.getElementById('mall_image').value = '';
-  document.getElementById('mallImageStatus').style.display = 'none';
   document.getElementById('mallFormError').style.display = 'none';
   populateMallSuppliersList();
   document.getElementById('mallModalBg').classList.add('open');
@@ -2504,9 +2499,8 @@ function compressImage(file, maxDim, quality){
   });
 }
 
-async function uploadMallImage(blob, invoiceId){
+async function uploadMallImage(blob, path){
   if(!isConfigured()) return null;
-  const path = `mall/${invoiceId}.jpg`;
   try{
     const res = await fetch(`${SUPABASE_URL}/storage/v1/object/mall-invoices/${path}`, {
       method: 'POST',
@@ -2517,9 +2511,44 @@ async function uploadMallImage(blob, invoiceId){
     return `${SUPABASE_URL}/storage/v1/object/public/mall-invoices/${path}`;
   }catch(e){
     console.error('mall image upload error', e);
-    showToast('حصل خطأ في رفع الصورة، بس الفاتورة اتسجلت من غيرها', true);
     return null;
   }
+}
+
+/* بترفع صورة واحدة للتقرير كله (مش لكل فاتورة لوحدها)، وتطبّقها على كل فواتير التقرير المعروض حاليًا */
+async function attachReportImage(event){
+  const file = event.target.files[0];
+  if(!file) return;
+
+  const targetInvoices = mallViewReportNo === 'open'
+    ? mallInvoices.filter(m => !m.reportNo)
+    : mallInvoices.filter(m => m.reportNo === mallViewReportNo);
+
+  if(targetInvoices.length === 0){
+    showToast('مفيش فواتير في التقرير ده عشان تضيفلها صورة', true);
+    event.target.value = '';
+    return;
+  }
+
+  showToast('جاري ضغط ورفع صورة التقرير...');
+  try{
+    const compressed = await compressImage(file, 1600, 0.75);
+    const pathLabel = mallViewReportNo === 'open' ? 'open-' + Date.now() : 'report-' + mallViewReportNo;
+    const url = await uploadMallImage(compressed, `mall/${pathLabel}.jpg`);
+    if(!url){
+      showToast('حصل خطأ في رفع الصورة', true);
+      event.target.value = '';
+      return;
+    }
+    targetInvoices.forEach(m => { m.imageUrl = url; });
+    await saveMallInvoices();
+    render();
+    showToast('اتضافت صورة التقرير ✓');
+  }catch(e){
+    console.error('report image error', e);
+    showToast('مقدرش أضغط أو أرفع الصورة', true);
+  }
+  event.target.value = '';
 }
 
 async function handleMallSave(){
@@ -2527,7 +2556,6 @@ async function handleMallSave(){
   const invoiceNumber = document.getElementById('mall_invoiceNumber').value.trim();
   const total = parseFloat(document.getElementById('mall_total').value) || 0;
   const hasReturn = document.getElementById('mall_hasReturn').checked;
-  const imageFile = document.getElementById('mall_image').files[0];
 
   const errEl = document.getElementById('mallFormError');
   if(!supplier || !total){
@@ -2537,29 +2565,13 @@ async function handleMallSave(){
   }
   errEl.style.display = 'none';
 
-  const newInvoice = {
+  mallInvoices.push({
     id: 'mall_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
     supplier, invoiceNumber, total, hasReturn,
     date: new Date().toISOString().slice(0,10),
     reportNo: null,
     imageUrl: null
-  };
-
-  if(imageFile){
-    const statusEl = document.getElementById('mallImageStatus');
-    statusEl.textContent = 'جاري ضغط ورفع الصورة...';
-    statusEl.style.display = 'block';
-    try{
-      const compressed = await compressImage(imageFile, 1400, 0.7);
-      const url = await uploadMallImage(compressed, newInvoice.id);
-      newInvoice.imageUrl = url;
-    }catch(e){
-      console.error('compress error', e);
-      showToast('مقدرش أضغط الصورة، اتسجلت الفاتورة من غيرها', true);
-    }
-  }
-
-  mallInvoices.push(newInvoice);
+  });
   await saveMallInvoices();
   closeMallModal();
   render();
@@ -2619,6 +2631,7 @@ function renderMallTab(){
     : mallInvoices.filter(m => m.reportNo === mallViewReportNo);
   const sorted = [...filtered].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
   const total = filtered.reduce((s,m)=>s+(m.total||0),0);
+  const reportImageUrl = filtered.find(m => m.imageUrl)?.imageUrl || null;
 
   let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
 
@@ -2629,6 +2642,9 @@ function renderMallTab(){
 
   html += `<div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;" class="no-print">
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="printMallReport()">🖨 طباعة التقرير ده</button>
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="document.getElementById('mallReportImageInput').click()">📷 ${reportImageUrl ? 'تغيير صورة التقرير' : 'إضافة صورة للتقرير'}</button>
+    <input type="file" id="mallReportImageInput" accept="image/*" capture="environment" style="display:none" onchange="attachReportImage(event)">
+    ${reportImageUrl ? `<a href="${reportImageUrl}" target="_blank" rel="noopener" class="btn btn-ghost" style="text-decoration:none;">🖼 عرض صورة التقرير</a>` : ''}
     ${mallViewReportNo === 'open' ? `<button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="closeMallReport()">🔒 إغلاق التقرير الحالي وابدأ تقرير جديد</button>` : ''}
   </div>`;
 
@@ -2650,7 +2666,7 @@ function renderMallTab(){
     html += `<div class="empty">مفيش فواتير في التقرير ده. ${mallViewReportNo==='open' ? 'دوس على زرار (+) تحت عشان تضيف أول فاتورة.' : ''}</div>`;
   } else {
     html += `<table><thead><tr>
-      <th>المورد</th><th>رقم الفاتورة</th><th>الإجمالي</th><th>مرتجع</th><th>صورة</th><th>التاريخ</th><th>اليوم</th><th class="no-print"></th>
+      <th>المورد</th><th>رقم الفاتورة</th><th>الإجمالي</th><th>مرتجع</th><th>التاريخ</th><th>اليوم</th><th class="no-print"></th>
     </tr></thead><tbody>`;
     sorted.forEach(m => {
       html += `<tr>
@@ -2658,7 +2674,6 @@ function renderMallTab(){
         <td>${escapeHtml(m.invoiceNumber || '—')}</td>
         <td>${formatNumber(m.total)}</td>
         <td>${m.hasReturn ? '<span style="color:var(--red);font-weight:600;">يوجد</span>' : '<span style="color:var(--muted);">لا يوجد</span>'}</td>
-        <td class="no-print">${m.imageUrl ? `<a href="${m.imageUrl}" target="_blank" rel="noopener" style="color:var(--mint);">عرض 🖼</a>` : '—'}</td>
         <td>${m.date}</td>
         <td>${arabicDayName(m.date)}</td>
         <td class="no-print">
