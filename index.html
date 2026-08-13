@@ -213,8 +213,8 @@
 
   @media print{
     body *{ visibility:hidden; }
-    #mallPrintArea, #mallPrintArea *{ visibility:visible; color:#000 !important; }
-    #mallPrintArea{ position:absolute; top:0; right:0; left:0; }
+    .print-area, .print-area *{ visibility:visible; color:#000 !important; }
+    .print-area{ position:absolute; top:0; right:0; left:0; }
     .print-only{ display:block !important; }
     .no-print{ display:none !important; }
     table{ width:100%; border-collapse:collapse; }
@@ -505,7 +505,11 @@ let pendingDeleteInvoiceId = null;
 let payConfirmSubId = null;
 let invoicesSearchQuery = '';
 let mallInvoices = [];
+let mallViewMonth = null;   // 'YYYY-MM' أو null (لسه مختارش)
+let mallViewDate = null;    // 'YYYY-MM-DD' أو null
 let mallViewReportNo = 'open'; // 'open' = التقرير الحالي اللي لسه ما اتقفلش، أو رقم تقرير مقفول
+let mallSearchQuery = '';
+let subsReportMonth = null;
 let pendingDeleteMallId = null;
 let editingPaymentId = null;
 let editingTxId = null;
@@ -2030,6 +2034,11 @@ function switchSubsContactSearch(val){
   render();
 }
 
+function switchSubsReportMonth(m){
+  subsReportMonth = m;
+  render();
+}
+
 function renderSubsTab(){
   const cq = normalizeContact(subsContactSearch);
   const baseSubs = cq ? subs.filter(s => normalizeContact(s.contactValue).includes(cq)) : subs;
@@ -2149,6 +2158,63 @@ function renderSubsTab(){
       </tr>`;
     });
     html += `</tbody></table>`;
+  }
+
+  // ====== تقرير شهري للاشتراكات (حسب شهر التجديد) ======
+  const reportMonths = [...new Set(activeSubs.map(s => (s.renewalDate||'').slice(0,7)).filter(Boolean))].sort();
+  const reportMonth = subsReportMonth && reportMonths.includes(subsReportMonth) ? subsReportMonth : (reportMonths[0] || null);
+  html += `<div class="section-title" style="margin-top:36px;">📄 تقرير شهري للاشتراكات</div>`;
+  if(reportMonths.length === 0){
+    html += `<div class="empty">مفيش اشتراكات نشطة عشان نعمل منها تقرير.</div>`;
+  } else {
+    html += `<div class="month-pills no-print">
+      ${reportMonths.map(m => `<button class="month-pill ${reportMonth===m?'active':''}" onclick="switchSubsReportMonth('${m}')">${monthLabel(m)}</button>`).join('')}
+    </div>`;
+    const reportSubs = activeSubs.filter(s => (s.renewalDate||'').slice(0,7) === reportMonth).sort((a,b)=> (a.renewalDate||'').localeCompare(b.renewalDate||''));
+    const reportTotalUsd = reportSubs.reduce((s,x)=>s+subUsdEquivalent(x),0);
+
+    html += `<div style="display:flex;gap:10px;margin-bottom:16px;" class="no-print">
+      <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="printReport()">🖨 طباعة تقرير ${monthLabel(reportMonth)}</button>
+    </div>`;
+
+    html += `<div class="print-area">
+      <h2 style="font-family:'Cairo',sans-serif;font-size:18px;margin:0 0 14px;display:none;" class="print-only">تقرير الاشتراكات — ${monthLabel(reportMonth)}</h2>
+      <div class="cards" style="margin-bottom:16px;">
+        <div class="card" style="cursor:default;">
+          <p class="client" style="margin-bottom:6px;">عدد الاشتراكات المتجددة في ${monthLabel(reportMonth)}</p>
+          <p class="store" style="font-size:22px;">${reportSubs.length}</p>
+        </div>
+        <div class="card" style="cursor:default;border-color:var(--mint);">
+          <p class="client" style="margin-bottom:6px;">إجمالي الشهر (بالدولار تقريبًا)</p>
+          <p class="store" style="font-size:22px;color:var(--mint);">$${reportTotalUsd.toFixed(2)} ${egpEquivalentHtml(reportTotalUsd)}</p>
+        </div>
+      </div>`;
+
+    if(reportSubs.length === 0){
+      html += `<div class="empty">مفيش اشتراكات بتتجدد في الشهر ده.</div>`;
+    } else {
+      html += `<table><thead><tr>
+        <th>اسم الخدمة</th><th>النوع</th><th>تاريخ التجديد</th><th>المبلغ</th><th>آخر دفعة</th>
+      </tr></thead><tbody>`;
+      reportSubs.forEach(s => {
+        html += `<tr>
+          <td>${escapeHtml(s.store)}</td>
+          <td>${fmtService(s.service)}</td>
+          <td>${s.renewalDate}</td>
+          <td>${subAmountHtml(s)}</td>
+          <td>${s.lastPaid || '—'}</td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+
+      html += `<div style="margin-top:44px;display:flex;justify-content:flex-start;">
+        <div style="min-width:260px;">
+          <p style="font-size:13.5px;color:var(--muted);margin:0 0 34px;">توقيع الحسابات بالاستلام:</p>
+          <div style="border-top:1px solid var(--ink);width:220px;"></div>
+        </div>
+      </div>`;
+    }
+    html += `</div>`;
   }
 
   return html;
@@ -2595,6 +2661,10 @@ function cancelDeleteMall(){
   render();
 }
 
+function printReport(){
+  window.print();
+}
+
 function printMallReport(){
   window.print();
 }
@@ -2604,41 +2674,170 @@ function formatNumber(n){
   return Number.isInteger(n) ? n.toString() : parseFloat(n.toFixed(2)).toString();
 }
 
+function getMallMonths(){
+  return [...new Set(mallInvoices.map(m => (m.date||'').slice(0,7)).filter(Boolean))].sort().reverse();
+}
+function getMallDatesInMonth(month){
+  return [...new Set(mallInvoices.filter(m => (m.date||'').slice(0,7) === month).map(m => m.date))].sort().reverse();
+}
+function getMallReportGroupsForDate(date){
+  const dayInvoices = mallInvoices.filter(m => m.date === date);
+  const groups = [];
+  if(dayInvoices.some(m => !m.reportNo)) groups.push('open');
+  const nums = [...new Set(dayInvoices.map(m => m.reportNo).filter(Boolean))].sort((a,b)=>a-b);
+  groups.push(...nums);
+  return groups;
+}
+
+/* بتتأكد إن الشهر/اليوم/التقرير المختارين لسه موجودين فعلًا في البيانات، وترجع لأقرب اختيار صحيح لو لأ */
+function normalizeMallView(){
+  const months = getMallMonths();
+  if(months.length === 0){ mallViewMonth = null; mallViewDate = null; mallViewReportNo = 'open'; return; }
+  if(!mallViewMonth || !months.includes(mallViewMonth)) mallViewMonth = months[0];
+
+  const dates = getMallDatesInMonth(mallViewMonth);
+  if(!mallViewDate || !dates.includes(mallViewDate)) mallViewDate = dates[0];
+
+  const groups = getMallReportGroupsForDate(mallViewDate);
+  const stillValid = mallViewReportNo === 'open' ? groups.includes('open') : groups.includes(mallViewReportNo);
+  if(!stillValid) mallViewReportNo = groups[0];
+}
+
+function switchMallMonth(month){
+  mallViewMonth = month;
+  mallViewDate = null;
+  mallViewReportNo = 'open';
+  render();
+}
+function switchMallDate(date){
+  mallViewDate = date;
+  mallViewReportNo = 'open';
+  render();
+}
 function switchMallReportView(val){
   mallViewReportNo = val === 'open' ? 'open' : parseInt(val, 10);
   render();
 }
+function switchMallSearch(val){
+  mallSearchQuery = val;
+  render();
+}
 
 async function closeMallReport(){
-  const openInvoices = mallInvoices.filter(m => !m.reportNo);
+  const openInvoices = mallInvoices.filter(m => !m.reportNo && m.date === mallViewDate);
   if(openInvoices.length === 0){
-    showToast('مفيش فواتير في التقرير الحالي عشان تقفله', true);
+    showToast('مفيش فواتير مفتوحة في اليوم ده عشان تقفلها', true);
     return;
   }
   const existingNumbers = mallInvoices.map(m => m.reportNo).filter(Boolean);
   const nextNo = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
   openInvoices.forEach(m => { m.reportNo = nextNo; });
   await saveMallInvoices();
-  mallViewReportNo = 'open';
+  mallViewReportNo = nextNo;
   render();
-  showToast(`تم إغلاق التقرير رقم ${nextNo} — أي فاتورة جديدة هتبقى في تقرير جديد`);
+  showToast(`تم إغلاق التقرير رقم ${nextNo} — أي فاتورة جديدة النهاردة هتبقى في تقرير جديد`);
+}
+
+function renderMallInvoiceRow(m, showReportCol){
+  return `<tr>
+    <td>${escapeHtml(m.supplier)}</td>
+    <td>${escapeHtml(m.invoiceNumber || '—')}</td>
+    <td>${formatNumber(m.total)}</td>
+    <td>${m.hasReturn ? '<span style="color:var(--red);font-weight:600;">يوجد</span>' : '<span style="color:var(--muted);">لا يوجد</span>'}</td>
+    <td>${m.date}</td>
+    <td>${arabicDayName(m.date)}</td>
+    ${showReportCol ? `<td>${m.reportNo ? 'تقرير ' + m.reportNo : 'مفتوح'}</td>` : ''}
+    <td class="no-print">
+      <div class="row-actions">
+        ${pendingDeleteMallId === m.id ? `
+          <button class="icon-btn" style="background:var(--red-dim);color:var(--red);border-color:var(--red);font-size:11px;width:auto;padding:0 8px;" onclick="deleteMallInvoice('${m.id}')" title="اضغط للتأكيد">تأكيد الحذف</button>
+          <button class="icon-btn" onclick="cancelDeleteMall()" title="إلغاء">↩</button>
+        ` : `<button class="icon-btn" onclick="deleteMallInvoice('${m.id}')" title="حذف">✕</button>`}
+      </div>
+    </td>
+  </tr>`;
 }
 
 function renderMallTab(){
-  const closedReportNumbers = [...new Set(mallInvoices.map(m => m.reportNo).filter(Boolean))].sort((a,b)=>b-a);
-  const filtered = mallViewReportNo === 'open'
-    ? mallInvoices.filter(m => !m.reportNo)
-    : mallInvoices.filter(m => m.reportNo === mallViewReportNo);
-  const sorted = [...filtered].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
-  const total = filtered.reduce((s,m)=>s+(m.total||0),0);
-  const reportImageUrl = filtered.find(m => m.imageUrl)?.imageUrl || null;
+  // ====== وضع البحث: بيدور بالمورد في كل التقارير مهما كان تاريخها ======
+  const q = mallSearchQuery.trim().toLowerCase();
+  if(q){
+    const matches = mallInvoices.filter(m => (m.supplier||'').toLowerCase().includes(q));
+    const sortedMatches = [...matches].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+    const matchTotal = matches.reduce((s,m)=>s+(m.total||0),0);
+
+    let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
+    html += `<div class="calc-card no-print" style="margin-bottom:18px;padding:14px 16px;">
+      <label style="margin-top:0;">🔍 دور باسم المورد (في كل الشهور والتقارير)</label>
+      <input id="mallSearchInput" value="${escapeHtml(mallSearchQuery)}" placeholder="مثال: شركة النور"
+        onkeydown="if(event.key==='Enter') switchMallSearch(this.value)">
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <button class="btn btn-primary" style="flex:1;" onclick="switchMallSearch(document.getElementById('mallSearchInput').value)">بحث</button>
+        <button class="btn btn-ghost" style="flex:none;padding:0 16px;" onclick="switchMallSearch('')">مسح</button>
+      </div>
+    </div>`;
+
+    html += `<div class="cards" style="margin-bottom:22px;">
+      <div class="card" style="cursor:default;">
+        <p class="client" style="margin-bottom:6px;">عدد الفواتير المطابقة</p>
+        <p class="store" style="font-size:22px;">${matches.length}</p>
+      </div>
+      <div class="card" style="cursor:default;border-color:var(--mint);">
+        <p class="client" style="margin-bottom:6px;">إجمالي المطابق</p>
+        <p class="store" style="font-size:22px;color:var(--mint);">${formatNumber(matchTotal)}</p>
+      </div>
+    </div>`;
+
+    html += `<div class="section-title">نتائج البحث <span class="count-pill">${matches.length}</span></div>`;
+    if(matches.length === 0){
+      html += `<div class="empty">مفيش فواتير لمورد بالاسم ده.</div>`;
+    } else {
+      html += `<table><thead><tr>
+        <th>المورد</th><th>رقم الفاتورة</th><th>الإجمالي</th><th>مرتجع</th><th>التاريخ</th><th>اليوم</th><th>التقرير</th><th class="no-print"></th>
+      </tr></thead><tbody>`;
+      sortedMatches.forEach(m => { html += renderMallInvoiceRow(m, true); });
+      html += `</tbody></table>`;
+    }
+    return html;
+  }
+
+  // ====== وضع التصفح العادي: شهر ← يوم ← تقرير ======
+  normalizeMallView();
 
   let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
 
-  html += `<div class="month-pills no-print">
-    <button class="month-pill ${mallViewReportNo==='open'?'active':''}" onclick="switchMallReportView('open')">التقرير الحالي (لسه مفتوح)</button>
-    ${closedReportNumbers.map(n => `<button class="month-pill ${mallViewReportNo===n?'active':''}" onclick="switchMallReportView('${n}')">تقرير رقم ${n}</button>`).join('')}
+  html += `<div class="calc-card no-print" style="margin-bottom:18px;padding:14px 16px;">
+    <label style="margin-top:0;">🔍 دور باسم المورد (في كل الشهور والتقارير)</label>
+    <input id="mallSearchInput" value="" placeholder="مثال: شركة النور"
+      onkeydown="if(event.key==='Enter') switchMallSearch(this.value)">
+    <button class="btn btn-ghost" style="width:100%;margin-top:10px;" onclick="switchMallSearch(document.getElementById('mallSearchInput').value)">بحث</button>
   </div>`;
+
+  if(mallInvoices.length === 0){
+    html += `<div class="empty">لسه معملتش فواتير. دوس على زرار (+) تحت عشان تضيف أول فاتورة.</div>`;
+    return html;
+  }
+
+  const months = getMallMonths();
+  const dates = getMallDatesInMonth(mallViewMonth);
+  const groups = getMallReportGroupsForDate(mallViewDate);
+
+  html += `<div class="month-pills no-print">
+    ${months.map(mo => `<button class="month-pill ${mallViewMonth===mo?'active':''}" onclick="switchMallMonth('${mo}')">${monthLabel(mo)}</button>`).join('')}
+  </div>`;
+  html += `<div class="month-pills no-print">
+    ${dates.map(d => `<button class="month-pill ${mallViewDate===d?'active':''}" onclick="switchMallDate('${d}')">${d} &middot; ${arabicDayName(d)}</button>`).join('')}
+  </div>`;
+  html += `<div class="month-pills no-print">
+    ${groups.map(g => `<button class="month-pill ${mallViewReportNo===g?'active':''}" onclick="switchMallReportView('${g}')">${g==='open' ? 'التقرير الحالي (مفتوح)' : 'تقرير رقم ' + g}</button>`).join('')}
+  </div>`;
+
+  const filtered = mallViewReportNo === 'open'
+    ? mallInvoices.filter(m => !m.reportNo && m.date === mallViewDate)
+    : mallInvoices.filter(m => m.reportNo === mallViewReportNo && m.date === mallViewDate);
+  const sorted = [...filtered].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+  const total = filtered.reduce((s,m)=>s+(m.total||0),0);
+  const reportImageUrl = filtered.find(m => m.imageUrl)?.imageUrl || null;
 
   html += `<div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;" class="no-print">
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="printMallReport()">🖨 طباعة التقرير ده</button>
@@ -2650,7 +2849,7 @@ function renderMallTab(){
 
   html += `<div class="cards" style="margin-bottom:22px;">
     <div class="card" style="cursor:default;">
-      <p class="client" style="margin-bottom:6px;">عدد الفواتير ${mallViewReportNo==='open' ? '(الحالي)' : '(تقرير ' + mallViewReportNo + ')'}</p>
+      <p class="client" style="margin-bottom:6px;">عدد الفواتير</p>
       <p class="store" style="font-size:22px;">${filtered.length}</p>
     </div>
     <div class="card" style="cursor:default;border-color:var(--mint);">
@@ -2659,8 +2858,8 @@ function renderMallTab(){
     </div>
   </div>`;
 
-  html += `<div id="mallPrintArea">
-    <h2 style="font-family:'Cairo',sans-serif;font-size:18px;margin:0 0 14px;display:none;" class="print-only">تقرير تسليم فواتير الموردين — المول ${mallViewReportNo!=='open' ? '(رقم '+mallViewReportNo+')' : ''}</h2>`;
+  html += `<div id="mallPrintArea" class="print-area">
+    <h2 style="font-family:'Cairo',sans-serif;font-size:18px;margin:0 0 14px;display:none;" class="print-only">تقرير تسليم فواتير الموردين — المول (${mallViewDate}${mallViewReportNo!=='open' ? ' — رقم '+mallViewReportNo : ''})</h2>`;
 
   if(filtered.length === 0){
     html += `<div class="empty">مفيش فواتير في التقرير ده. ${mallViewReportNo==='open' ? 'دوس على زرار (+) تحت عشان تضيف أول فاتورة.' : ''}</div>`;
@@ -2668,24 +2867,7 @@ function renderMallTab(){
     html += `<table><thead><tr>
       <th>المورد</th><th>رقم الفاتورة</th><th>الإجمالي</th><th>مرتجع</th><th>التاريخ</th><th>اليوم</th><th class="no-print"></th>
     </tr></thead><tbody>`;
-    sorted.forEach(m => {
-      html += `<tr>
-        <td>${escapeHtml(m.supplier)}</td>
-        <td>${escapeHtml(m.invoiceNumber || '—')}</td>
-        <td>${formatNumber(m.total)}</td>
-        <td>${m.hasReturn ? '<span style="color:var(--red);font-weight:600;">يوجد</span>' : '<span style="color:var(--muted);">لا يوجد</span>'}</td>
-        <td>${m.date}</td>
-        <td>${arabicDayName(m.date)}</td>
-        <td class="no-print">
-          <div class="row-actions">
-            ${pendingDeleteMallId === m.id ? `
-              <button class="icon-btn" style="background:var(--red-dim);color:var(--red);border-color:var(--red);font-size:11px;width:auto;padding:0 8px;" onclick="deleteMallInvoice('${m.id}')" title="اضغط للتأكيد">تأكيد الحذف</button>
-              <button class="icon-btn" onclick="cancelDeleteMall()" title="إلغاء">↩</button>
-            ` : `<button class="icon-btn" onclick="deleteMallInvoice('${m.id}')" title="حذف">✕</button>`}
-          </div>
-        </td>
-      </tr>`;
-    });
+    sorted.forEach(m => { html += renderMallInvoiceRow(m, false); });
     html += `</tbody></table>`;
 
     html += `<div style="margin-top:44px;display:flex;justify-content:flex-start;">
@@ -2963,7 +3145,14 @@ function renderPaymentsTab(){
     </div>
   </div>`;
 
-  html += `<div class="cards" style="margin-bottom:14px;">
+  html += `<div style="display:flex;gap:10px;margin-bottom:16px;" class="no-print">
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="printReport()">🖨 طباعة تقرير المدفوعات ده</button>
+  </div>`;
+
+  html += `<div class="print-area">
+    <h2 style="font-family:'Cairo',sans-serif;font-size:18px;margin:0 0 14px;display:none;" class="print-only">تقرير المدفوعات ${paymentsMonthFilter ? '— ' + monthLabel(paymentsMonthFilter) : ''}</h2>
+
+  <div class="cards" style="margin-bottom:14px;">
     <div class="card" style="cursor:default;">
       <p class="client" style="margin-bottom:6px;">عدد الدفعات ${paymentsMonthFilter ? '(' + monthLabel(paymentsMonthFilter) + ')' : ''}</p>
       <p class="store" style="font-size:22px;">${filtered.length}</p>
@@ -2978,7 +3167,7 @@ function renderPaymentsTab(){
     </div>
   </div>`;
 
-  html += `<div class="cards" style="margin-bottom:20px;">
+  html += `<div class="cards no-print" style="margin-bottom:20px;">
     ${methods.map(m => `<div class="card" style="cursor:default;">
       <p class="client" style="margin-bottom:6px;">${receivedMethodLabel(m)}</p>
       <p class="store" style="font-size:18px;">${methodTotals[m].toFixed(2)} ج.م</p>
@@ -3020,7 +3209,15 @@ function renderPaymentsTab(){
       </tr>`;
     });
     html += `</tbody></table>`;
+
+    html += `<div style="margin-top:44px;display:flex;justify-content:flex-start;">
+      <div style="min-width:260px;">
+        <p style="font-size:13.5px;color:var(--muted);margin:0 0 34px;">توقيع الحسابات بالاستلام:</p>
+        <div style="border-top:1px solid var(--ink);width:220px;"></div>
+      </div>
+    </div>`;
   }
+  html += `</div>`;
   return html;
 }
 
