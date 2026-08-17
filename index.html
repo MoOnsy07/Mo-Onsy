@@ -509,6 +509,7 @@ let mallViewMonth = null;   // 'YYYY-MM' أو null (لسه مختارش)
 let mallViewDate = null;    // 'YYYY-MM-DD' أو null
 let mallViewReportNo = 'open'; // 'open' = التقرير الحالي اللي لسه ما اتقفلش، أو رقم تقرير مقفول
 let mallSearchQuery = '';
+let mallSummaryMode = false;
 let subsReportMonth = null;
 let pendingDeleteMallId = null;
 let editingPaymentId = null;
@@ -2758,7 +2759,69 @@ function renderMallInvoiceRow(m, showReportCol){
   </tr>`;
 }
 
+function toggleMallSummary(){
+  mallSummaryMode = !mallSummaryMode;
+  render();
+}
+
+function jumpToMallSupplier(encodedName){
+  mallSummaryMode = false;
+  mallSearchQuery = decodeURIComponent(encodedName);
+  render();
+}
+
+function renderMallSupplierSummary(){
+  const map = {};
+  mallInvoices.forEach(m => {
+    const key = m.supplier || 'بدون اسم';
+    if(!map[key]) map[key] = { supplier: key, count: 0, total: 0 };
+    map[key].count += 1;
+    map[key].total += (m.total || 0);
+  });
+  const suppliers = Object.values(map).sort((a,b) => b.total - a.total);
+  const grandTotal = suppliers.reduce((s,x)=>s+x.total,0);
+
+  let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
+  html += `<div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;" class="no-print">
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallSummary()">↩ رجوع لعرض التقارير</button>
+  </div>`;
+
+  html += `<div class="cards" style="margin-bottom:22px;">
+    <div class="card" style="cursor:default;">
+      <p class="client" style="margin-bottom:6px;">عدد الموردين</p>
+      <p class="store" style="font-size:22px;">${suppliers.length}</p>
+    </div>
+    <div class="card" style="cursor:default;border-color:var(--mint);">
+      <p class="client" style="margin-bottom:6px;">إجمالي كل الفواتير</p>
+      <p class="store" style="font-size:22px;color:var(--mint);">${formatNumber(grandTotal)}</p>
+    </div>
+  </div>`;
+
+  html += `<div class="section-title">ملخص الموردين <span class="count-pill">${suppliers.length}</span></div>`;
+  if(suppliers.length === 0){
+    html += `<div class="empty">لسه مفيش فواتير مسجّلة.</div>`;
+  } else {
+    html += `<div class="cards">`;
+    suppliers.forEach(s => {
+      html += `<div class="card" style="cursor:pointer;" onclick="jumpToMallSupplier('${encodeURIComponent(s.supplier)}')">
+        <p class="store">${escapeHtml(s.supplier)}</p>
+        <p class="client" style="margin-bottom:10px;">${s.count} فاتورة</p>
+        <div class="meta">
+          <span>إجمالي</span>
+          <span class="amount">${formatNumber(s.total)}</span>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+  return html;
+}
+
 function renderMallTab(){
+  if(mallSummaryMode){
+    return renderMallSupplierSummary();
+  }
+
   // ====== وضع البحث: بيدور بالمورد في كل التقارير مهما كان تاريخها ======
   const q = mallSearchQuery.trim().toLowerCase();
   if(q){
@@ -2767,6 +2830,9 @@ function renderMallTab(){
     const matchTotal = matches.reduce((s,m)=>s+(m.total||0),0);
 
     let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
+    html += `<div style="display:flex;gap:10px;margin-bottom:12px;" class="no-print">
+      <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallSummary()">📊 ملخص الموردين</button>
+    </div>`;
     html += `<div class="calc-card no-print" style="margin-bottom:18px;padding:14px 16px;">
       <label style="margin-top:0;">🔍 دور باسم المورد (في كل الشهور والتقارير)</label>
       <input id="mallSearchInput" value="${escapeHtml(mallSearchQuery)}" placeholder="مثال: شركة النور"
@@ -2805,6 +2871,10 @@ function renderMallTab(){
   normalizeMallView();
 
   let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
+
+  html += `<div style="display:flex;gap:10px;margin-bottom:12px;" class="no-print">
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallSummary()">📊 ملخص الموردين</button>
+  </div>`;
 
   html += `<div class="calc-card no-print" style="margin-bottom:18px;padding:14px 16px;">
     <label style="margin-top:0;">🔍 دور باسم المورد (في كل الشهور والتقارير)</label>
