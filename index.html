@@ -2605,8 +2605,8 @@ async function attachReportImage(event){
   if(!file) return;
 
   const targetInvoices = mallViewReportNo === 'open'
-    ? mallInvoices.filter(m => !m.reportNo)
-    : mallInvoices.filter(m => m.reportNo === mallViewReportNo);
+    ? mallInvoices.filter(m => !m.reportNo && m.date === mallViewDate)
+    : mallInvoices.filter(m => m.reportNo === mallViewReportNo && m.date === mallViewDate);
 
   if(targetInvoices.length === 0){
     showToast('مفيش فواتير في التقرير ده عشان تضيفلها صورة', true);
@@ -2614,20 +2614,24 @@ async function attachReportImage(event){
     return;
   }
 
-  showToast('جاري ضغط ورفع صورة التقرير...');
+  showToast('جاري ضغط ورفع الصورة...');
   try{
     const compressed = await compressImage(file, 1600, 0.75);
-    const pathLabel = mallViewReportNo === 'open' ? 'open-' + Date.now() : 'report-' + mallViewReportNo;
+    const uniqueSuffix = Date.now() + '-' + Math.random().toString(36).slice(2,7);
+    const pathLabel = mallViewReportNo === 'open' ? 'open-' + uniqueSuffix : 'report-' + mallViewReportNo + '-' + uniqueSuffix;
     const url = await uploadMallImage(compressed, `mall/${pathLabel}.jpg`);
     if(!url){
       showToast('حصل خطأ في رفع الصورة', true);
       event.target.value = '';
       return;
     }
-    targetInvoices.forEach(m => { m.imageUrl = url; });
+    // بنضيف الرابط الجديد لأي روابط موجودة قبل كده، مش نستبدلها
+    const existingUrls = getReportImageUrls(targetInvoices);
+    const allUrls = [...existingUrls, url].join('|');
+    targetInvoices.forEach(m => { m.imageUrl = allUrls; });
     await saveMallInvoices();
     render();
-    showToast('اتضافت صورة التقرير ✓');
+    showToast('اتضافت الصورة للتقرير ✓');
   }catch(e){
     console.error('report image error', e);
     showToast('مقدرش أضغط أو أرفع الصورة', true);
@@ -2768,6 +2772,26 @@ function cancelDeleteMall(){
 
 function printReport(){
   window.print();
+}
+
+/* بترجع قايمة روابط صور التقرير (ممكن يبقى فيها أكتر من صورة) */
+function getReportImageUrls(invoicesList){
+  const withImage = invoicesList.find(m => m.imageUrl);
+  if(!withImage) return [];
+  return withImage.imageUrl.split('|').filter(Boolean);
+}
+
+async function removeReportImage(urlIndex){
+  const targetInvoices = mallViewReportNo === 'open'
+    ? mallInvoices.filter(m => !m.reportNo && m.date === mallViewDate)
+    : mallInvoices.filter(m => m.reportNo === mallViewReportNo && m.date === mallViewDate);
+  const urls = getReportImageUrls(targetInvoices);
+  urls.splice(urlIndex, 1);
+  const newValue = urls.length > 0 ? urls.join('|') : null;
+  targetInvoices.forEach(m => { m.imageUrl = newValue; });
+  await saveMallInvoices();
+  render();
+  showToast('اتشالت الصورة');
 }
 
 function printMallReport(){
@@ -3013,15 +3037,24 @@ function renderMallTab(){
     : mallInvoices.filter(m => m.reportNo === mallViewReportNo && m.date === mallViewDate);
   const sorted = [...filtered].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
   const total = filtered.reduce((s,m)=>s+(m.total||0),0);
-  const reportImageUrl = filtered.find(m => m.imageUrl)?.imageUrl || null;
+  const reportImageUrls = getReportImageUrls(filtered);
 
-  html += `<div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;" class="no-print">
+  html += `<div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;" class="no-print">
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="printMallReport()">🖨 طباعة التقرير ده</button>
-    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="document.getElementById('mallReportImageInput').click()">📷 ${reportImageUrl ? 'تغيير صورة التقرير' : 'إضافة صورة للتقرير'}</button>
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="document.getElementById('mallReportImageInput').click()">📷 إضافة صورة للتقرير</button>
     <input type="file" id="mallReportImageInput" accept="image/*" capture="environment" style="display:none" onchange="attachReportImage(event)">
-    ${reportImageUrl ? `<a href="${reportImageUrl}" target="_blank" rel="noopener" class="btn btn-ghost" style="text-decoration:none;">🖼 عرض صورة التقرير</a>` : ''}
     ${mallViewReportNo === 'open' ? `<button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="closeMallReport()">🔒 إغلاق التقرير الحالي وابدأ تقرير جديد</button>` : ''}
   </div>`;
+
+  if(reportImageUrls.length > 0){
+    html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px;" class="no-print">
+      ${reportImageUrls.map((url, i) => `
+        <span style="display:inline-flex;align-items:center;gap:4px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:4px 6px 4px 10px;">
+          <a href="${url}" target="_blank" rel="noopener" style="color:var(--mint);font-size:13px;text-decoration:none;">🖼 صورة ${i+1}</a>
+          <button class="icon-btn" style="width:22px;height:22px;font-size:11px;" onclick="removeReportImage(${i})" title="حذف الصورة دي">✕</button>
+        </span>`).join('')}
+    </div>`;
+  }
 
   html += `<div class="cards" style="margin-bottom:22px;">
     <div class="card" style="cursor:default;">
