@@ -461,6 +461,23 @@
       <button class="btn btn-ghost" id="mallCancelBtn">إلغاء</button>
       <button class="btn btn-primary" id="mallSaveBtn">حفظ</button>
     </div>
+    <button type="button" class="btn btn-ghost" style="width:100%;margin-top:10px;font-size:12.5px;" onclick="closeMallModal();openMallBulkModal();">📦 عندك أكتر من فاتورة لنفس المورد؟ أضفهم دفعة واحدة</button>
+  </div>
+</div>
+
+<div class="modal-bg" id="mallBulkModalBg">
+  <div class="modal" style="max-width:520px;max-height:85vh;overflow-y:auto;">
+    <h2>إضافة عدة فواتير لمورد واحد</h2>
+    <label>اسم المورد (مرة واحدة بس)</label>
+    <input id="mallBulk_supplier" list="mallSuppliersList" placeholder="مثال: شركة النور للتوريدات">
+    <p style="color:var(--muted);font-size:12px;margin:10px 0 6px;">دلوقتي ضيف رقم وسعر كل فاتورة في سطر لوحده:</p>
+    <div id="mallBulkRows"></div>
+    <button type="button" class="btn btn-ghost" style="width:100%;margin-top:8px;" onclick="addMallBulkRow()">+ سطر فاتورة جديد</button>
+    <p id="mallBulkFormError" style="color:var(--red);font-size:12.5px;margin:12px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mallBulkCancelBtn">إلغاء</button>
+      <button class="btn btn-primary" id="mallBulkSaveBtn">حفظ الكل</button>
+    </div>
   </div>
 </div>
 
@@ -2645,6 +2662,93 @@ async function handleMallSave(){
   showToast('تم تسجيل الفاتورة');
 }
 
+/* ====== إضافة عدة فواتير لمورد واحد دفعة واحدة ====== */
+let mallBulkRowCounter = 0;
+
+function mallBulkRowHtml(rowId){
+  return `<div class="calc-row" id="mallBulkRow${rowId}" style="align-items:flex-end;margin-bottom:8px;">
+    <div><label style="margin-top:0;">رقم الفاتورة</label><input id="mallBulk_num${rowId}" placeholder="مثال: 4521"></div>
+    <div><label style="margin-top:0;">الإجمالي</label><input id="mallBulk_total${rowId}" type="number" step="0.01" placeholder="مثال: 3500"></div>
+    <div style="flex:none;display:flex;flex-direction:column;align-items:center;gap:4px;">
+      <label style="margin:0;font-size:10.5px;color:var(--muted);">مرتجع</label>
+      <input type="checkbox" id="mallBulk_return${rowId}" style="width:auto;">
+    </div>
+    <button type="button" class="icon-btn" style="flex:none;" onclick="removeMallBulkRow(${rowId})" title="حذف السطر">✕</button>
+  </div>`;
+}
+
+function addMallBulkRow(){
+  mallBulkRowCounter++;
+  document.getElementById('mallBulkRows').insertAdjacentHTML('beforeend', mallBulkRowHtml(mallBulkRowCounter));
+}
+
+function removeMallBulkRow(rowId){
+  const el = document.getElementById('mallBulkRow' + rowId);
+  if(el) el.remove();
+}
+
+function openMallBulkModal(){
+  document.getElementById('mallBulk_supplier').value = '';
+  document.getElementById('mallBulkRows').innerHTML = '';
+  document.getElementById('mallBulkFormError').style.display = 'none';
+  mallBulkRowCounter = 0;
+  populateMallSuppliersList();
+  addMallBulkRow();
+  addMallBulkRow();
+  addMallBulkRow();
+  document.getElementById('mallBulkModalBg').classList.add('open');
+}
+function closeMallBulkModal(){
+  document.getElementById('mallBulkModalBg').classList.remove('open');
+}
+
+async function handleMallBulkSave(){
+  const supplier = document.getElementById('mallBulk_supplier').value.trim();
+  const errEl = document.getElementById('mallBulkFormError');
+  if(!supplier){
+    errEl.textContent = 'اكتب اسم المورد الأول';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const rows = document.querySelectorAll('#mallBulkRows > div');
+  const today = new Date().toISOString().slice(0,10);
+  let added = 0;
+
+  rows.forEach(row => {
+    const rowId = row.id.replace('mallBulkRow', '');
+    const numInput = document.getElementById('mallBulk_num' + rowId);
+    const totalInput = document.getElementById('mallBulk_total' + rowId);
+    const returnInput = document.getElementById('mallBulk_return' + rowId);
+    const total = parseFloat(totalInput.value) || 0;
+    if(!total) return; // تجاهل أي سطر فاضي
+
+    mallInvoices.push({
+      id: 'mall_' + Date.now() + '_' + Math.random().toString(36).slice(2,7) + '_' + rowId,
+      supplier,
+      invoiceNumber: numInput.value.trim(),
+      total,
+      hasReturn: returnInput.checked,
+      date: today,
+      reportNo: null,
+      imageUrl: null
+    });
+    added++;
+  });
+
+  if(added === 0){
+    errEl.textContent = 'اكتب مبلغ فاتورة واحدة على الأقل';
+    errEl.style.display = 'block';
+    return;
+  }
+  errEl.style.display = 'none';
+
+  await saveMallInvoices();
+  closeMallBulkModal();
+  render();
+  showToast(`تم تسجيل ${added} فاتورة لـ${supplier} ✓`);
+}
+
 async function deleteMallInvoice(id){
   if(pendingDeleteMallId !== id){
     pendingDeleteMallId = id;
@@ -2832,6 +2936,7 @@ function renderMallTab(){
     let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
     html += `<div style="display:flex;gap:10px;margin-bottom:12px;" class="no-print">
       <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallSummary()">📊 ملخص الموردين</button>
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="openMallBulkModal()">📦 إضافة عدة فواتير لمورد واحد</button>
     </div>`;
     html += `<div class="calc-card no-print" style="margin-bottom:18px;padding:14px 16px;">
       <label style="margin-top:0;">🔍 دور باسم المورد (في كل الشهور والتقارير)</label>
@@ -2874,6 +2979,7 @@ function renderMallTab(){
 
   html += `<div style="display:flex;gap:10px;margin-bottom:12px;" class="no-print">
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallSummary()">📊 ملخص الموردين</button>
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="openMallBulkModal()">📦 إضافة عدة فواتير لمورد واحد</button>
   </div>`;
 
   html += `<div class="calc-card no-print" style="margin-bottom:18px;padding:14px 16px;">
@@ -3543,6 +3649,11 @@ document.getElementById('mallCancelBtn').addEventListener('click', closeMallModa
 document.getElementById('mallSaveBtn').addEventListener('click', handleMallSave);
 document.getElementById('mallModalBg').addEventListener('click', (e) => {
   if(e.target.id === 'mallModalBg') closeMallModal();
+});
+document.getElementById('mallBulkCancelBtn').addEventListener('click', closeMallBulkModal);
+document.getElementById('mallBulkSaveBtn').addEventListener('click', handleMallBulkSave);
+document.getElementById('mallBulkModalBg').addEventListener('click', (e) => {
+  if(e.target.id === 'mallBulkModalBg') closeMallBulkModal();
 });
 document.getElementById('payConfirmCancelBtn').addEventListener('click', closePayConfirmModal);
 document.getElementById('payConfirmBtn').addEventListener('click', handlePayConfirm);
