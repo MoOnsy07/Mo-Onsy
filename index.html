@@ -341,6 +341,21 @@
       <button class="btn btn-ghost" id="paymentCancelBtn">إلغاء</button>
       <button class="btn btn-primary" id="paymentSaveBtn">حفظ</button>
     </div>
+    <button type="button" class="btn btn-ghost" style="width:100%;margin-top:10px;font-size:12.5px;" onclick="closePaymentModal();openPaymentBulkModal();">📦 عندك عدة دفعات مختلفة؟ سجّلهم دفعة واحدة</button>
+  </div>
+</div>
+
+<div class="modal-bg" id="paymentBulkModalBg">
+  <div class="modal" style="max-width:640px;max-height:85vh;overflow-y:auto;">
+    <h2>إضافة عدة دفعات مختلفة</h2>
+    <p style="color:var(--muted);font-size:12.5px;margin:0 0 14px;">كل صف = دفعة منفصلة. العملة هنا جنيه بس (لو دفعة بعملة تانية، سجّلها لوحدها من المودال العادي بعدين).</p>
+    <div id="paymentBulkRows"></div>
+    <button type="button" class="btn btn-ghost" style="width:100%;margin-top:8px;" onclick="addPaymentBulkRow()">+ صف دفعة جديد</button>
+    <p id="paymentBulkFormError" style="color:var(--red);font-size:12.5px;margin:12px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="paymentBulkCancelBtn">إلغاء</button>
+      <button class="btn btn-primary" id="paymentBulkSaveBtn">حفظ الكل</button>
+    </div>
   </div>
 </div>
 
@@ -454,6 +469,10 @@
     <label style="display:flex;align-items:center;gap:8px;margin-top:14px;cursor:pointer;">
       <input type="checkbox" id="mall_hasReturn" style="width:auto;">
       يوجد مرتجع في الفاتورة دي
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:10px;cursor:pointer;">
+      <input type="checkbox" id="mall_isBonus" style="width:auto;" onchange="if(this.checked){document.getElementById('mall_total').value='0';document.getElementById('mall_total').disabled=true;}else{document.getElementById('mall_total').disabled=false;document.getElementById('mall_total').value='';}">
+      فاتورة بونص (مبلغها 0 جنيه)
     </label>
     <p style="color:var(--muted);font-size:12px;margin:12px 0 0;">التاريخ واليوم بيتسجلوا تلقائي وقت الحفظ.</p>
     <p id="mallFormError" style="color:var(--red);font-size:12.5px;margin:10px 0 0;display:none;"></p>
@@ -698,7 +717,8 @@ function toRemoteMallShape(m){
     total: m.total || 0, date: m.date,
     has_return: !!m.hasReturn,
     report_no: m.reportNo || null,
-    image_url: m.imageUrl || null
+    image_url: m.imageUrl || null,
+    is_bonus: !!m.isBonus
   };
 }
 function fromRemoteMallShape(r){
@@ -707,7 +727,8 @@ function fromRemoteMallShape(r){
     total: r.total || 0, date: r.date,
     hasReturn: !!r.has_return,
     reportNo: r.report_no || null,
-    imageUrl: r.image_url || null
+    imageUrl: r.image_url || null,
+    isBonus: !!r.is_bonus
   };
 }
 
@@ -1521,6 +1542,99 @@ async function handlePaymentSave(){
   closePaymentModal();
   render();
   showToast(editingPaymentId ? 'تم تحديث الدفعة' : 'تم إضافة الدفعة');
+}
+
+/* ====== إضافة عدة دفعات مختلفة دفعة واحدة ====== */
+let paymentBulkRowCounter = 0;
+
+function paymentBulkRowHtml(rowId){
+  return `<div id="paymentBulkRow${rowId}" style="margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:10px;">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end;margin-bottom:6px;">
+      <div style="flex:2;min-width:140px;"><label style="margin-top:0;font-size:11px;">الخدمة</label><input id="pBulk_service${rowId}" list="serviceTypesList" placeholder="مثال: Shopify"></div>
+      <div style="flex:2;min-width:140px;"><label style="margin-top:0;font-size:11px;">رقم واتساب / أكونت ماسنجر</label><input id="pBulk_contact${rowId}" list="clientContactList" placeholder="مثال: 201012345678"></div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end;">
+      <div style="flex:1;min-width:85px;"><label style="margin-top:0;font-size:11px;">التكلفة</label><input id="pBulk_cost${rowId}" type="number" step="0.01" placeholder="450"></div>
+      <div style="flex:1;min-width:85px;"><label style="margin-top:0;font-size:11px;">المستلم</label><input id="pBulk_received${rowId}" type="number" step="0.01" placeholder="500"></div>
+      <div style="flex:1;min-width:110px;"><label style="margin-top:0;font-size:11px;">طريقة الاستلام</label>
+        <select id="pBulk_method${rowId}">
+          <option value="instapay">إنستاباي</option>
+          <option value="vodafone_cash">فودافون كاش</option>
+          <option value="etisalat_cash">اتصالات كاش</option>
+          <option value="other">أخرى</option>
+        </select>
+      </div>
+      <button type="button" class="icon-btn" style="flex:none;" onclick="removePaymentBulkRow(${rowId})" title="حذف الصف">✕</button>
+    </div>
+  </div>`;
+}
+
+function addPaymentBulkRow(){
+  paymentBulkRowCounter++;
+  document.getElementById('paymentBulkRows').insertAdjacentHTML('beforeend', paymentBulkRowHtml(paymentBulkRowCounter));
+}
+
+function removePaymentBulkRow(rowId){
+  const el = document.getElementById('paymentBulkRow' + rowId);
+  if(el) el.remove();
+}
+
+function openPaymentBulkModal(){
+  document.getElementById('paymentBulkRows').innerHTML = '';
+  document.getElementById('paymentBulkFormError').style.display = 'none';
+  paymentBulkRowCounter = 0;
+  populateDatalists();
+  for(let i=0;i<6;i++) addPaymentBulkRow();
+  document.getElementById('paymentBulkModalBg').classList.add('open');
+}
+function closePaymentBulkModal(){
+  document.getElementById('paymentBulkModalBg').classList.remove('open');
+}
+
+async function handlePaymentBulkSave(){
+  const rows = document.querySelectorAll('#paymentBulkRows > div');
+  const today = new Date().toISOString().slice(0,10);
+  const errEl = document.getElementById('paymentBulkFormError');
+  let added = 0;
+
+  rows.forEach(row => {
+    const rowId = row.id.replace('paymentBulkRow', '');
+    const service = document.getElementById('pBulk_service' + rowId).value.trim();
+    const contactValue = document.getElementById('pBulk_contact' + rowId).value.trim();
+    const cost = parseFloat(document.getElementById('pBulk_cost' + rowId).value) || 0;
+    const received = parseFloat(document.getElementById('pBulk_received' + rowId).value) || 0;
+    const method = document.getElementById('pBulk_method' + rowId).value;
+    if(!received) return; // تجاهل أي صف فاضي
+
+    // لو الرقم غالبيته أرقام، نعتبره واتساب؛ غير كده نعتبره اسم أكونت ماسنجر
+    const digitsOnly = contactValue.replace(/\D/g,'');
+    const contactMethod = digitsOnly.length >= 8 ? 'whatsapp' : (contactValue ? 'messenger' : 'whatsapp');
+
+    payments.push({
+      id: 'pay_' + Date.now() + '_' + Math.random().toString(36).slice(2,7) + '_' + rowId,
+      description: service || 'دفعة',
+      service: service || 'أخرى',
+      client: '', contactMethod, contactValue,
+      costAmount: cost, costCurrency: 'EGP',
+      amount: received, currency: 'EGP',
+      receivedMethod: method,
+      paidDate: today,
+      profit: received - cost
+    });
+    added++;
+  });
+
+  if(added === 0){
+    errEl.textContent = 'اكتب مبلغ مستلم لدفعة واحدة على الأقل';
+    errEl.style.display = 'block';
+    return;
+  }
+  errEl.style.display = 'none';
+
+  await savePayments();
+  closePaymentBulkModal();
+  render();
+  showToast(`تم تسجيل ${added} دفعة ✓`);
 }
 
 let pendingDeletePaymentId = null;
@@ -2553,7 +2667,9 @@ function openMallModal(){
   document.getElementById('mall_supplier').value = '';
   document.getElementById('mall_invoiceNumber').value = '';
   document.getElementById('mall_total').value = '';
+  document.getElementById('mall_total').disabled = false;
   document.getElementById('mall_hasReturn').checked = false;
+  document.getElementById('mall_isBonus').checked = false;
   document.getElementById('mallFormError').style.display = 'none';
   populateMallSuppliersList();
   document.getElementById('mallModalBg').classList.add('open');
@@ -2639,15 +2755,27 @@ async function attachReportImage(event){
   event.target.value = '';
 }
 
+function isMallInvoiceNumberTaken(num, excludeId){
+  const n = num.trim().toLowerCase();
+  if(!n) return false;
+  return mallInvoices.some(m => m.id !== excludeId && (m.invoiceNumber||'').trim().toLowerCase() === n);
+}
+
 async function handleMallSave(){
   const supplier = document.getElementById('mall_supplier').value.trim();
   const invoiceNumber = document.getElementById('mall_invoiceNumber').value.trim();
-  const total = parseFloat(document.getElementById('mall_total').value) || 0;
+  const isBonus = document.getElementById('mall_isBonus').checked;
+  const total = isBonus ? 0 : (parseFloat(document.getElementById('mall_total').value) || 0);
   const hasReturn = document.getElementById('mall_hasReturn').checked;
 
   const errEl = document.getElementById('mallFormError');
-  if(!supplier || !total){
+  if(!supplier || (!isBonus && !total)){
     errEl.textContent = 'اكتب اسم المورد ومبلغ إجمالي صحيح';
+    errEl.style.display = 'block';
+    return;
+  }
+  if(isMallInvoiceNumberTaken(invoiceNumber, null)){
+    errEl.textContent = 'رقم الفاتورة ده مسجّل قبل كده لمورد آخر';
     errEl.style.display = 'block';
     return;
   }
@@ -2655,7 +2783,7 @@ async function handleMallSave(){
 
   mallInvoices.push({
     id: 'mall_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
-    supplier, invoiceNumber, total, hasReturn,
+    supplier, invoiceNumber, total, hasReturn, isBonus,
     date: new Date().toISOString().slice(0,10),
     reportNo: null,
     imageUrl: null
@@ -2672,10 +2800,14 @@ let mallBulkRowCounter = 0;
 function mallBulkRowHtml(rowId){
   return `<div class="calc-row" id="mallBulkRow${rowId}" style="align-items:flex-end;margin-bottom:8px;">
     <div><label style="margin-top:0;">رقم الفاتورة</label><input id="mallBulk_num${rowId}" placeholder="مثال: 4521"></div>
-    <div><label style="margin-top:0;">الإجمالي</label><input id="mallBulk_total${rowId}" type="number" step="0.01" placeholder="مثال: 3500"></div>
+    <div><label style="margin-top:0;">الإجمالي</label><input id="mallBulk_total${rowId}" type="number" step="0.01" placeholder="مثال: 3500" onchange="if(document.getElementById('mallBulk_bonus${rowId}').checked) this.value='0';"></div>
     <div style="flex:none;display:flex;flex-direction:column;align-items:center;gap:4px;">
       <label style="margin:0;font-size:10.5px;color:var(--muted);">مرتجع</label>
       <input type="checkbox" id="mallBulk_return${rowId}" style="width:auto;">
+    </div>
+    <div style="flex:none;display:flex;flex-direction:column;align-items:center;gap:4px;">
+      <label style="margin:0;font-size:10.5px;color:var(--muted);">بونص</label>
+      <input type="checkbox" id="mallBulk_bonus${rowId}" style="width:auto;" onchange="const t=document.getElementById('mallBulk_total${rowId}'); if(this.checked){t.value='0';t.disabled=true;}else{t.disabled=false;t.value='';}">
     </div>
     <button type="button" class="icon-btn" style="flex:none;" onclick="removeMallBulkRow(${rowId})" title="حذف السطر">✕</button>
   </div>`;
@@ -2717,22 +2849,37 @@ async function handleMallBulkSave(){
 
   const rows = document.querySelectorAll('#mallBulkRows > div');
   const today = new Date().toISOString().slice(0,10);
+  const usedInThisBatch = new Set();
   let added = 0;
+  let duplicateFound = null;
 
   rows.forEach(row => {
+    if(duplicateFound) return;
     const rowId = row.id.replace('mallBulkRow', '');
     const numInput = document.getElementById('mallBulk_num' + rowId);
     const totalInput = document.getElementById('mallBulk_total' + rowId);
     const returnInput = document.getElementById('mallBulk_return' + rowId);
-    const total = parseFloat(totalInput.value) || 0;
-    if(!total) return; // تجاهل أي سطر فاضي
+    const bonusInput = document.getElementById('mallBulk_bonus' + rowId);
+    const isBonus = bonusInput.checked;
+    const total = isBonus ? 0 : (parseFloat(totalInput.value) || 0);
+    const invoiceNumber = numInput.value.trim();
+    if(!isBonus && !total) return; // تجاهل أي سطر فاضي (إلا لو بونص)
+
+    const normalizedNum = invoiceNumber.toLowerCase();
+    if(normalizedNum){
+      if(isMallInvoiceNumberTaken(invoiceNumber, null) || usedInThisBatch.has(normalizedNum)){
+        duplicateFound = invoiceNumber;
+        return;
+      }
+      usedInThisBatch.add(normalizedNum);
+    }
 
     mallInvoices.push({
       id: 'mall_' + Date.now() + '_' + Math.random().toString(36).slice(2,7) + '_' + rowId,
       supplier,
-      invoiceNumber: numInput.value.trim(),
-      total,
+      invoiceNumber, total,
       hasReturn: returnInput.checked,
+      isBonus,
       date: today,
       reportNo: null,
       imageUrl: null
@@ -2740,8 +2887,16 @@ async function handleMallBulkSave(){
     added++;
   });
 
+  if(duplicateFound){
+    // نلغي أي إضافات تمت قبل ما نكتشف التكرار عشان الحفظ يبقى كامل أو ولا حاجة
+    mallInvoices = mallInvoices.slice(0, mallInvoices.length - added);
+    errEl.textContent = `رقم الفاتورة "${duplicateFound}" مكرر (إما مسجّل قبل كده أو مكرر في نفس القايمة)`;
+    errEl.style.display = 'block';
+    return;
+  }
+
   if(added === 0){
-    errEl.textContent = 'اكتب مبلغ فاتورة واحدة على الأقل';
+    errEl.textContent = 'اكتب مبلغ فاتورة واحدة على الأقل، أو علّم على بونص';
     errEl.style.display = 'block';
     return;
   }
@@ -2871,7 +3026,7 @@ function renderMallInvoiceRow(m, showReportCol){
   return `<tr>
     <td>${escapeHtml(m.supplier)}</td>
     <td>${escapeHtml(m.invoiceNumber || '—')}</td>
-    <td>${formatNumber(m.total)}</td>
+    <td>${m.isBonus ? '<span style="color:var(--brass);font-weight:600;">بونص (0)</span>' : formatNumber(m.total)}</td>
     <td>${m.hasReturn ? '<span style="color:var(--red);font-weight:600;">يوجد</span>' : '<span style="color:var(--muted);">لا يوجد</span>'}</td>
     <td>${m.date}</td>
     <td>${arabicDayName(m.date)}</td>
@@ -3341,6 +3496,10 @@ function renderPaymentsTab(){
     ${months.map(m => `<button class="month-pill ${paymentsMonthFilter===m?'active':''}" onclick="switchPaymentsMonth('${m}')">${monthLabel(m)}</button>`).join('')}
   </div>`;
 
+  html += `<div style="margin-bottom:14px;">
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="openPaymentBulkModal()">📦 إضافة عدة دفعات دفعة واحدة</button>
+  </div>`;
+
   html += `<div class="calc-card" style="margin-bottom:16px;padding:14px 16px;">
     <label style="margin-top:0;">🔍 دور باسم الخدمة أو العميل</label>
     <input id="paymentsSearchInput" placeholder="مثال: Shopify أو اسم العميل" value="${escapeHtml(paymentsSearchQuery)}" onkeydown="if(event.key==='Enter') applyPaymentsFilters()">
@@ -3645,6 +3804,11 @@ document.getElementById('paymentCancelBtn').addEventListener('click', closePayme
 document.getElementById('paymentSaveBtn').addEventListener('click', handlePaymentSave);
 document.getElementById('paymentModalBg').addEventListener('click', (e) => {
   if(e.target.id === 'paymentModalBg') closePaymentModal();
+});
+document.getElementById('paymentBulkCancelBtn').addEventListener('click', closePaymentBulkModal);
+document.getElementById('paymentBulkSaveBtn').addEventListener('click', handlePaymentBulkSave);
+document.getElementById('paymentBulkModalBg').addEventListener('click', (e) => {
+  if(e.target.id === 'paymentBulkModalBg') closePaymentBulkModal();
 });
 document.getElementById('txCancelBtn').addEventListener('click', closeTxModal);
 document.getElementById('txSaveBtn').addEventListener('click', handleTxSave);
