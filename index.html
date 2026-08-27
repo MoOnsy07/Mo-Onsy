@@ -184,6 +184,37 @@
   }
   .tab-btn.active{background:var(--mint-dim);color:var(--mint);}
 
+  .top-bar{display:flex;align-items:center;gap:12px;margin-bottom:18px;}
+  .hamburger-btn{
+    background:var(--surface);border:1px solid var(--border);color:var(--text);
+    width:44px;height:44px;border-radius:10px;font-size:19px;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;flex:none;
+  }
+  .hamburger-btn:hover{border-color:var(--mint);}
+  .top-bar-title{font-family:'Cairo',sans-serif;font-weight:800;font-size:17px;}
+
+  .drawer-overlay{
+    position:fixed;inset:0;background:rgba(5,8,15,0.6);z-index:60;
+    opacity:0;pointer-events:none;transition:opacity 0.2s;
+  }
+  .drawer-overlay.open{opacity:1;pointer-events:auto;}
+  .side-drawer{
+    position:fixed;top:0;right:0;height:100vh;width:280px;max-width:82vw;
+    background:var(--surface);border-left:1px solid var(--border);
+    z-index:61;padding:20px 16px;
+    transform:translateX(100%);transition:transform 0.25s ease;
+    overflow-y:auto;
+  }
+  .side-drawer.open{transform:translateX(0);}
+  .side-drawer .drawer-title{font-family:'Cairo',sans-serif;font-weight:900;font-size:18px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;}
+  .drawer-nav-btn{
+    display:block;width:100%;text-align:right;background:transparent;border:none;
+    color:var(--muted);padding:13px 14px;border-radius:10px;font-weight:700;font-size:14.5px;
+    cursor:pointer;font-family:inherit;margin-bottom:4px;
+  }
+  .drawer-nav-btn.active{background:var(--mint-dim);color:var(--mint);}
+  .drawer-nav-btn:hover:not(.active){background:var(--surface-2);}
+
   .rate-bar{
     display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;
     background:var(--surface);border:1px solid var(--border);border-radius:12px;
@@ -551,6 +582,7 @@ let pendingDeleteMallId = null;
 let editingPaymentId = null;
 let editingTxId = null;
 let activeTab = 'subs';
+let sideMenuOpen = false;
 let paymentsMonthFilter = null;
 let paymentsSearchQuery = '';
 let subsContactSearch = '';
@@ -2101,15 +2133,30 @@ function switchTab(tab){
   render();
 }
 
-function tabBarHtml(){
-  return `<div class="tabs">
-    <button class="tab-btn ${activeTab==='subs'?'active':''}" onclick="switchTab('subs')">الاشتراكات</button>
-    <button class="tab-btn ${activeTab==='payments'?'active':''}" onclick="switchTab('payments')">مدفوعات</button>
-    <button class="tab-btn ${activeTab==='profit'?'active':''}" onclick="switchTab('profit')">الربح</button>
-    <button class="tab-btn ${activeTab==='services'?'active':''}" onclick="switchTab('services')">الخدمات</button>
-    <button class="tab-btn ${activeTab==='clients'?'active':''}" onclick="switchTab('clients')">العملاء</button>
-    <button class="tab-btn ${activeTab==='invoices'?'active':''}" onclick="switchTab('invoices')">الفواتير</button>
-    <button class="tab-btn ${activeTab==='mall'?'active':''}" onclick="switchTab('mall')">المول</button>
+const TAB_LABELS = {
+  subs: 'الاشتراكات', payments: 'مدفوعات', profit: 'الربح', services: 'الخدمات',
+  clients: 'العملاء', invoices: 'الفواتير', mall: 'المول', ledger: 'مصاريفي'
+};
+
+function toggleSideMenu(){
+  sideMenuOpen = !sideMenuOpen;
+  render();
+}
+
+function navigateTo(tab){
+  sideMenuOpen = false;
+  switchTab(tab);
+}
+
+function topBarHtml(){
+  return `<div class="top-bar">
+    <button class="hamburger-btn" onclick="toggleSideMenu()">☰</button>
+    <span class="top-bar-title">${TAB_LABELS[activeTab] || 'الاشتراكات'}</span>
+  </div>
+  <div class="drawer-overlay ${sideMenuOpen?'open':''}" onclick="toggleSideMenu()"></div>
+  <div class="side-drawer ${sideMenuOpen?'open':''}">
+    <div class="drawer-title">القائمة <button class="icon-btn" onclick="toggleSideMenu()">✕</button></div>
+    ${Object.keys(TAB_LABELS).map(key => `<button class="drawer-nav-btn ${activeTab===key?'active':''}" onclick="navigateTo('${key}')">${TAB_LABELS[key]}</button>`).join('')}
   </div>`;
 }
 
@@ -2120,7 +2167,7 @@ function render(){
   let html = `<h1>Mo Onsy</h1>`;
   html += rateBarHtml();
   html += vaultBarHtml();
-  html += tabBarHtml();
+  html += topBarHtml();
 
   if(activeTab === 'payments'){
     fab.style.display = 'flex';
@@ -2149,6 +2196,12 @@ function render(){
     fab.innerHTML = '+ إضافة فاتورة';
     fab.onclick = () => openMallModal();
     html += renderMallTab();
+  } else if(activeTab === 'ledger'){
+    fab.style.display = 'flex';
+    fab.title = 'إضافة معاملة';
+    fab.innerHTML = '+ إضافة معاملة';
+    fab.onclick = () => openTxModal(null);
+    html += renderLedgerTab();
   } else {
     activeTab = 'subs';
     fab.style.display = 'flex';
