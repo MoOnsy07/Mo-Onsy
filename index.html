@@ -380,12 +380,29 @@
   <div class="modal" style="max-width:640px;max-height:85vh;overflow-y:auto;">
     <h2>إضافة عدة دفعات مختلفة</h2>
     <p style="color:var(--muted);font-size:12.5px;margin:0 0 14px;">كل صف = دفعة منفصلة. العملة هنا جنيه بس (لو دفعة بعملة تانية، سجّلها لوحدها من المودال العادي بعدين).</p>
+    <label style="margin-top:0;">تاريخ كل الدفعات دي</label>
+    <input id="paymentBulk_date" type="date">
+    <p style="color:var(--muted);font-size:12px;margin:6px 0 14px;">افتراضيًا النهاردة، وتقدر تغيّره لأي تاريخ قديم لو الدفعات دي من شهر فات.</p>
     <div id="paymentBulkRows"></div>
     <button type="button" class="btn btn-ghost" style="width:100%;margin-top:8px;" onclick="addPaymentBulkRow()">+ صف دفعة جديد</button>
     <p id="paymentBulkFormError" style="color:var(--red);font-size:12.5px;margin:12px 0 0;display:none;"></p>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="paymentBulkCancelBtn">إلغاء</button>
       <button class="btn btn-primary" id="paymentBulkSaveBtn">حفظ الكل</button>
+    </div>
+    <button type="button" class="btn btn-ghost" style="width:100%;margin-top:10px;font-size:12.5px;" onclick="closePaymentBulkModal();openPaymentImportModal();">📋 عندك كشف كبير (٢٠+ معاملة)؟ استوردهم مرة واحدة</button>
+  </div>
+</div>
+
+<div class="modal-bg" id="paymentImportModalBg">
+  <div class="modal" style="max-width:560px;">
+    <h2>استيراد دفعات بالجملة</h2>
+    <p style="color:var(--muted);font-size:12.5px;margin:0 0 14px;">الصق هنا النص اللي هجهزلك (شكله JSON)، ودوس استيراد.</p>
+    <textarea id="paymentImportText" rows="10" placeholder="الصق البيانات هنا..." style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:10px 11px;border-radius:9px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;resize:vertical;direction:ltr;"></textarea>
+    <p id="paymentImportError" style="color:var(--red);font-size:12.5px;margin:10px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="paymentImportCancelBtn">إلغاء</button>
+      <button class="btn btn-primary" id="paymentImportSaveBtn">استيراد</button>
     </div>
   </div>
 </div>
@@ -554,8 +571,21 @@
   </div>
 </div>
 
+<div class="modal-bg" id="mallCloseConfirmModalBg">
+  <div class="modal">
+    <h2>تأكيد إغلاق التقرير</h2>
+    <p id="mallCloseConfirmMsg" style="color:var(--muted);font-size:13.5px;margin:0 0 4px;line-height:1.7;"></p>
+    <p style="color:var(--amber);font-size:12.5px;margin:10px 0 0;">بعد الإغلاق، أي فاتورة جديدة النهاردة هتتسجل في تقرير جديد منفصل.</p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mallCloseConfirmCancelBtn">إلغاء</button>
+      <button class="btn btn-primary" id="mallCloseConfirmBtn">🔒 نعم، اقفل التقرير</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" style="position:fixed;bottom:28px;right:28px;background:#171E2E;border:1px solid #2DD4BF;color:#2DD4BF;padding:12px 18px;border-radius:10px;font-size:13.5px;display:none;z-index:60;font-family:'IBM Plex Sans Arabic',sans-serif;max-width:280px;"></div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 let subs = [];
 let payments = [];
@@ -575,6 +605,7 @@ let mallInvoices = [];
 let mallViewMonth = null;   // 'YYYY-MM' أو null (لسه مختارش)
 let mallViewDate = null;    // 'YYYY-MM-DD' أو null
 let mallViewReportNo = 'open'; // 'open' = التقرير الحالي اللي لسه ما اتقفلش، أو رقم تقرير مقفول
+let pendingReopenReportNo = null;
 let mallSearchQuery = '';
 let mallSummaryMode = false;
 let subsReportMonth = null;
@@ -583,6 +614,7 @@ let editingPaymentId = null;
 let editingTxId = null;
 let activeTab = 'subs';
 let sideMenuOpen = false;
+let paymentsImportSheetCounts = {}; // { 'اسم الشيت': عدد الصفوف اللي اتسجلت آخر مرة }
 let paymentsMonthFilter = null;
 let paymentsSearchQuery = '';
 let subsContactSearch = '';
@@ -981,6 +1013,7 @@ async function loadData(){
   await loadTransactions();
   await loadWallets();
   await loadVaultMeta();
+  await loadPaymentsImportState();
   await loadDebtors();
   await loadInvoices();
   await loadMallInvoices();
@@ -1221,6 +1254,34 @@ async function deleteRemoteMallRow(id){
     showToast('حصل خطأ في الحذف', true);
   }
 }
+
+async function loadPaymentsImportState(){
+  if(!isConfigured()) return;
+  try{
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/payments_import_sheets?select=*`, { headers: sbHeaders() });
+    if(!res.ok) throw new Error('fetch failed: ' + res.status);
+    const rows = await res.json();
+    paymentsImportSheetCounts = {};
+    rows.forEach(r => { paymentsImportSheetCounts[r.sheet_name] = r.last_count || 0; });
+  }catch(e){
+    console.error('load import state error', e);
+  }
+}
+
+async function savePaymentsImportSheetCount(sheetName, count){
+  paymentsImportSheetCounts[sheetName] = count;
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/payments_import_sheets`, {
+      method: 'POST',
+      headers: sbHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify([{ sheet_name: sheetName, last_count: count }])
+    });
+  }catch(e){
+    console.error('save import state error', e);
+  }
+}
+
 
 async function loadVaultMeta(){
   if(!isConfigured()) return;
@@ -1614,6 +1675,7 @@ function removePaymentBulkRow(rowId){
 function openPaymentBulkModal(){
   document.getElementById('paymentBulkRows').innerHTML = '';
   document.getElementById('paymentBulkFormError').style.display = 'none';
+  document.getElementById('paymentBulk_date').value = new Date().toISOString().slice(0,10);
   paymentBulkRowCounter = 0;
   populateDatalists();
   for(let i=0;i<6;i++) addPaymentBulkRow();
@@ -1625,7 +1687,7 @@ function closePaymentBulkModal(){
 
 async function handlePaymentBulkSave(){
   const rows = document.querySelectorAll('#paymentBulkRows > div');
-  const today = new Date().toISOString().slice(0,10);
+  const chosenDate = document.getElementById('paymentBulk_date').value || new Date().toISOString().slice(0,10);
   const errEl = document.getElementById('paymentBulkFormError');
   let added = 0;
 
@@ -1650,7 +1712,7 @@ async function handlePaymentBulkSave(){
       costAmount: cost, costCurrency: 'EGP',
       amount: received, currency: 'EGP',
       receivedMethod: method,
-      paidDate: today,
+      paidDate: chosenDate,
       profit: received - cost
     });
     added++;
@@ -1667,6 +1729,179 @@ async function handlePaymentBulkSave(){
   closePaymentBulkModal();
   render();
   showToast(`تم تسجيل ${added} دفعة ✓`);
+}
+
+/* ====== رفع شيت إكسل يومي (بيستورد بس الصفوف الجديدة اللي زودتها عن آخر مرة) ====== */
+function normalizeReceivedMethod(text){
+  const t = (text||'').toLowerCase();
+  if(t.includes('انستا') || t.includes('إنستا') || t.includes('instapay')) return 'instapay';
+  if(t.includes('فودافون') || t.includes('vodafone')) return 'vodafone_cash';
+  if(t.includes('اتصالات') || t.includes('etisalat')) return 'etisalat_cash';
+  return 'other';
+}
+
+function normalizeCurrency(text){
+  const t = (text||'').toUpperCase();
+  if(t.includes('USD') || t.includes('دولار') || t === '$') return 'USD';
+  if(t.includes('EUR') || t.includes('يورو')) return 'EUR';
+  if(t.includes('GBP') || t.includes('استرليني') || t.includes('إسترليني')) return 'GBP';
+  return 'EGP';
+}
+
+function parseExcelDateValue(val){
+  if(val instanceof Date && !isNaN(val)) return toISODateLocal(val);
+  if(typeof val === 'string' && val.trim()){
+    const d = new Date(val);
+    if(!isNaN(d)) return toISODateLocal(d);
+  }
+  return new Date().toISOString().slice(0,10);
+}
+
+async function handlePaymentExcelUpload(event){
+  const file = event.target.files[0];
+  if(!file) return;
+
+  if(typeof XLSX === 'undefined'){
+    showToast('مكتبة قراءة الإكسل مش محمّلة، جرّب تحدّث الصفحة', true);
+    event.target.value = '';
+    return;
+  }
+
+  try{
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+
+    let totalAdded = 0;
+    let sheetsWithNew = [];
+
+    for(const sheetName of wb.SheetNames){
+      const sheet = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      const dataRows = rows.slice(1).filter(r => r.some(c => c !== '' && c !== null && c !== undefined));
+      const totalCount = dataRows.length;
+      const lastCount = paymentsImportSheetCounts[sheetName] || 0;
+
+      if(totalCount <= lastCount) continue; // مفيش جديد في الشيت ده
+      const newRows = dataRows.slice(lastCount);
+
+      let addedInSheet = 0;
+      newRows.forEach((r, i) => {
+        const service = String(r[0] || '').trim();
+        const contactValue = String(r[1] || '').trim();
+        const methodRaw = String(r[2] || '').trim();
+        const dateRaw = r[3];
+        const cost = parseFloat(r[4]) || 0;
+        const receivedRaw = r[5];
+        const profit = parseFloat(r[6]) || 0;
+        const currencyRaw = String(r[7] || '').trim();
+        if(!service && !cost) return;
+
+        const received = (receivedRaw !== '' && receivedRaw !== null && receivedRaw !== undefined)
+          ? (parseFloat(receivedRaw) || 0)
+          : (cost + profit); // لو خانة "اللي العميل بعته" فاضية، نحسبها من التكلفة + الربح كاحتياطي
+
+        const digitsOnly = contactValue.replace(/\D/g,'');
+        const contactMethod = digitsOnly.length >= 8 ? 'whatsapp' : (contactValue ? 'messenger' : 'whatsapp');
+        const currency = normalizeCurrency(currencyRaw);
+
+        payments.push({
+          id: 'pay_' + Date.now() + '_' + Math.random().toString(36).slice(2,7) + '_' + sheetName + '_' + i,
+          description: service || 'دفعة',
+          service: service || 'أخرى',
+          client: '', contactMethod, contactValue,
+          costAmount: cost, costCurrency: currency,
+          amount: received, currency,
+          receivedMethod: normalizeReceivedMethod(methodRaw),
+          paidDate: parseExcelDateValue(dateRaw),
+          profit
+        });
+        addedInSheet++;
+      });
+
+      if(addedInSheet > 0){
+        totalAdded += addedInSheet;
+        sheetsWithNew.push(`${sheetName} (${addedInSheet})`);
+        await savePaymentsImportSheetCount(sheetName, totalCount);
+      }
+    }
+
+    if(totalAdded === 0){
+      showToast('كل الشيتات دي متسجلة قبل كده، مفيش جديد', true);
+      event.target.value = '';
+      return;
+    }
+
+    await savePayments();
+    render();
+    showToast(`تم استيراد ${totalAdded} دفعة جديدة: ${sheetsWithNew.join('، ')}`);
+  }catch(e){
+    console.error('excel import error', e);
+    showToast('حصل خطأ في قراءة ملف الإكسل، اتأكد من شكل الأعمدة', true);
+  }
+  event.target.value = '';
+}
+
+/* ====== استيراد دفعات بالجملة من نص JSON (لكشوفات كبيرة زي إكسل) ====== */
+function openPaymentImportModal(){
+  document.getElementById('paymentImportText').value = '';
+  document.getElementById('paymentImportError').style.display = 'none';
+  document.getElementById('paymentImportModalBg').classList.add('open');
+}
+function closePaymentImportModal(){
+  document.getElementById('paymentImportModalBg').classList.remove('open');
+}
+
+async function handlePaymentImportSave(){
+  const errEl = document.getElementById('paymentImportError');
+  const raw = document.getElementById('paymentImportText').value.trim();
+  if(!raw){
+    errEl.textContent = 'الصق البيانات الأول';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  let parsed;
+  try{
+    parsed = JSON.parse(raw);
+    if(!Array.isArray(parsed)) throw new Error('not an array');
+  }catch(e){
+    errEl.textContent = 'الصيغة مش سليمة، تأكد إنك لصقت النص كامل من غير تعديل';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  let added = 0;
+  parsed.forEach(item => {
+    if(!item.amount) return;
+    payments.push({
+      id: 'pay_' + Date.now() + '_' + Math.random().toString(36).slice(2,7) + '_' + added,
+      description: item.description || item.service || 'دفعة',
+      service: item.service || 'أخرى',
+      client: item.client || '',
+      contactMethod: item.contactMethod || 'whatsapp',
+      contactValue: item.contactValue || '',
+      costAmount: item.costAmount || 0,
+      costCurrency: item.costCurrency || 'EGP',
+      amount: item.amount || 0,
+      currency: item.currency || 'EGP',
+      receivedMethod: item.receivedMethod || 'other',
+      paidDate: item.paidDate || new Date().toISOString().slice(0,10),
+      profit: (typeof item.profit === 'number') ? item.profit : (item.amount||0) - (item.costAmount||0)
+    });
+    added++;
+  });
+
+  if(added === 0){
+    errEl.textContent = 'مفيش صفوف صحيحة اتقرت من النص ده';
+    errEl.style.display = 'block';
+    return;
+  }
+  errEl.style.display = 'none';
+
+  await savePayments();
+  closePaymentImportModal();
+  render();
+  showToast(`تم استيراد ${added} دفعة ✓`);
 }
 
 let pendingDeletePaymentId = null;
@@ -3060,6 +3295,21 @@ function switchMallSearch(val){
   render();
 }
 
+function openMallCloseConfirm(){
+  const openInvoices = mallInvoices.filter(m => !m.reportNo && m.date === mallViewDate);
+  if(openInvoices.length === 0){
+    showToast('مفيش فواتير مفتوحة في اليوم ده عشان تقفلها', true);
+    return;
+  }
+  const total = openInvoices.reduce((s,m)=>s+(m.total||0),0);
+  document.getElementById('mallCloseConfirmMsg').textContent =
+    `هيتقفل تقرير فيه ${openInvoices.length} فاتورة، بإجمالي ${formatNumber(total)}. متأكد؟`;
+  document.getElementById('mallCloseConfirmModalBg').classList.add('open');
+}
+function closeMallCloseConfirmModal(){
+  document.getElementById('mallCloseConfirmModalBg').classList.remove('open');
+}
+
 async function closeMallReport(){
   const openInvoices = mallInvoices.filter(m => !m.reportNo && m.date === mallViewDate);
   if(openInvoices.length === 0){
@@ -3071,8 +3321,28 @@ async function closeMallReport(){
   openInvoices.forEach(m => { m.reportNo = nextNo; });
   await saveMallInvoices();
   mallViewReportNo = nextNo;
+  closeMallCloseConfirmModal();
   render();
   showToast(`تم إغلاق التقرير رقم ${nextNo} — أي فاتورة جديدة النهاردة هتبقى في تقرير جديد`);
+}
+
+async function requestReopenMallReport(reportNo){
+  if(pendingReopenReportNo !== reportNo){
+    pendingReopenReportNo = reportNo;
+    render();
+    return;
+  }
+  pendingReopenReportNo = null;
+  const invoicesInReport = mallInvoices.filter(m => m.reportNo === reportNo);
+  invoicesInReport.forEach(m => { m.reportNo = null; });
+  await saveMallInvoices();
+  mallViewReportNo = 'open';
+  render();
+  showToast(`تم فتح التقرير رقم ${reportNo} تاني، وبقت فواتيره ضمن التقرير المفتوح`);
+}
+function cancelReopenMall(){
+  pendingReopenReportNo = null;
+  render();
 }
 
 function renderMallInvoiceRow(m, showReportCol){
@@ -3251,7 +3521,13 @@ function renderMallTab(){
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="printMallReport()">🖨 طباعة التقرير ده</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="document.getElementById('mallReportImageInput').click()">📷 إضافة صورة للتقرير</button>
     <input type="file" id="mallReportImageInput" accept="image/*" capture="environment" style="display:none" onchange="attachReportImage(event)">
-    ${mallViewReportNo === 'open' ? `<button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="closeMallReport()">🔒 إغلاق التقرير الحالي وابدأ تقرير جديد</button>` : ''}
+    ${mallViewReportNo === 'open' ? `<button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="openMallCloseConfirm()">🔒 إغلاق التقرير الحالي وابدأ تقرير جديد</button>` : ''}
+    ${mallViewReportNo !== 'open' ? (
+      pendingReopenReportNo === mallViewReportNo
+        ? `<button class="btn" style="flex:none;padding:8px 16px;background:var(--red-dim);color:var(--red);" onclick="requestReopenMallReport(${mallViewReportNo})">تأكيد إعادة الفتح</button>
+           <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="cancelReopenMall()">إلغاء</button>`
+        : `<button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="requestReopenMallReport(${mallViewReportNo})">🔓 إعادة فتح هذا التقرير</button>`
+    ) : ''}
   </div>`;
 
   if(reportImageUrls.length > 0){
@@ -3549,8 +3825,11 @@ function renderPaymentsTab(){
     ${months.map(m => `<button class="month-pill ${paymentsMonthFilter===m?'active':''}" onclick="switchPaymentsMonth('${m}')">${monthLabel(m)}</button>`).join('')}
   </div>`;
 
-  html += `<div style="margin-bottom:14px;">
+  html += `<div style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;">
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="openPaymentBulkModal()">📦 إضافة عدة دفعات دفعة واحدة</button>
+    <button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="document.getElementById('paymentExcelInput').click()">📤 رفع شيت إكسل اليومي</button>
+    <input type="file" id="paymentExcelInput" accept=".xlsx,.xls" style="display:none" onchange="handlePaymentExcelUpload(event)">
+    <span style="font-size:11.5px;color:var(--muted);align-self:center;">${Object.keys(paymentsImportSheetCounts).length ? 'شيتات متتبّعة: ' + Object.entries(paymentsImportSheetCounts).map(([n,c])=>n+' ('+c+')').join('، ') : 'لسه ما رفعتش شيت'}</span>
   </div>`;
 
   html += `<div class="calc-card" style="margin-bottom:16px;padding:14px 16px;">
@@ -3863,6 +4142,11 @@ document.getElementById('paymentBulkSaveBtn').addEventListener('click', handlePa
 document.getElementById('paymentBulkModalBg').addEventListener('click', (e) => {
   if(e.target.id === 'paymentBulkModalBg') closePaymentBulkModal();
 });
+document.getElementById('paymentImportCancelBtn').addEventListener('click', closePaymentImportModal);
+document.getElementById('paymentImportSaveBtn').addEventListener('click', handlePaymentImportSave);
+document.getElementById('paymentImportModalBg').addEventListener('click', (e) => {
+  if(e.target.id === 'paymentImportModalBg') closePaymentImportModal();
+});
 document.getElementById('txCancelBtn').addEventListener('click', closeTxModal);
 document.getElementById('txSaveBtn').addEventListener('click', handleTxSave);
 document.getElementById('txModalBg').addEventListener('click', (e) => {
@@ -3909,6 +4193,11 @@ document.getElementById('payConfirmCancelBtn').addEventListener('click', closePa
 document.getElementById('payConfirmBtn').addEventListener('click', handlePayConfirm);
 document.getElementById('payConfirmModalBg').addEventListener('click', (e) => {
   if(e.target.id === 'payConfirmModalBg') closePayConfirmModal();
+});
+document.getElementById('mallCloseConfirmCancelBtn').addEventListener('click', closeMallCloseConfirmModal);
+document.getElementById('mallCloseConfirmBtn').addEventListener('click', closeMallReport);
+document.getElementById('mallCloseConfirmModalBg').addEventListener('click', (e) => {
+  if(e.target.id === 'mallCloseConfirmModalBg') closeMallCloseConfirmModal();
 });
 
 /* ====== شاشة القفل ====== */
