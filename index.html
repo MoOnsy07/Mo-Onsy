@@ -554,18 +554,6 @@
   </div>
 </div>
 
-<div class="modal-bg" id="mallCloseConfirmModalBg">
-  <div class="modal">
-    <h2>تأكيد إغلاق التقرير</h2>
-    <p id="mallCloseConfirmMsg" style="color:var(--muted);font-size:13.5px;margin:0 0 4px;line-height:1.7;"></p>
-    <p style="color:var(--amber);font-size:12.5px;margin:10px 0 0;">بعد الإغلاق، أي فاتورة جديدة النهاردة هتتسجل في تقرير جديد منفصل.</p>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" id="mallCloseConfirmCancelBtn">إلغاء</button>
-      <button class="btn btn-primary" id="mallCloseConfirmBtn">🔒 نعم، اقفل التقرير</button>
-    </div>
-  </div>
-</div>
-
 <div id="toast" style="position:fixed;bottom:28px;right:28px;background:#171E2E;border:1px solid #2DD4BF;color:#2DD4BF;padding:12px 18px;border-radius:10px;font-size:13.5px;display:none;z-index:60;font-family:'IBM Plex Sans Arabic',sans-serif;max-width:280px;"></div>
 
 <script>
@@ -587,7 +575,6 @@ let mallInvoices = [];
 let mallViewMonth = null;   // 'YYYY-MM' أو null (لسه مختارش)
 let mallViewDate = null;    // 'YYYY-MM-DD' أو null
 let mallViewReportNo = 'open'; // 'open' = التقرير الحالي اللي لسه ما اتقفلش، أو رقم تقرير مقفول
-let pendingReopenReportNo = null;
 let mallSearchQuery = '';
 let mallSummaryMode = false;
 let subsReportMonth = null;
@@ -3073,21 +3060,6 @@ function switchMallSearch(val){
   render();
 }
 
-function openMallCloseConfirm(){
-  const openInvoices = mallInvoices.filter(m => !m.reportNo && m.date === mallViewDate);
-  if(openInvoices.length === 0){
-    showToast('مفيش فواتير مفتوحة في اليوم ده عشان تقفلها', true);
-    return;
-  }
-  const total = openInvoices.reduce((s,m)=>s+(m.total||0),0);
-  document.getElementById('mallCloseConfirmMsg').textContent =
-    `هيتقفل تقرير فيه ${openInvoices.length} فاتورة، بإجمالي ${formatNumber(total)}. متأكد؟`;
-  document.getElementById('mallCloseConfirmModalBg').classList.add('open');
-}
-function closeMallCloseConfirmModal(){
-  document.getElementById('mallCloseConfirmModalBg').classList.remove('open');
-}
-
 async function closeMallReport(){
   const openInvoices = mallInvoices.filter(m => !m.reportNo && m.date === mallViewDate);
   if(openInvoices.length === 0){
@@ -3099,28 +3071,8 @@ async function closeMallReport(){
   openInvoices.forEach(m => { m.reportNo = nextNo; });
   await saveMallInvoices();
   mallViewReportNo = nextNo;
-  closeMallCloseConfirmModal();
   render();
   showToast(`تم إغلاق التقرير رقم ${nextNo} — أي فاتورة جديدة النهاردة هتبقى في تقرير جديد`);
-}
-
-async function requestReopenMallReport(reportNo){
-  if(pendingReopenReportNo !== reportNo){
-    pendingReopenReportNo = reportNo;
-    render();
-    return;
-  }
-  pendingReopenReportNo = null;
-  const invoicesInReport = mallInvoices.filter(m => m.reportNo === reportNo);
-  invoicesInReport.forEach(m => { m.reportNo = null; });
-  await saveMallInvoices();
-  mallViewReportNo = 'open';
-  render();
-  showToast(`تم فتح التقرير رقم ${reportNo} تاني، وبقت فواتيره ضمن التقرير المفتوح`);
-}
-function cancelReopenMall(){
-  pendingReopenReportNo = null;
-  render();
 }
 
 function renderMallInvoiceRow(m, showReportCol){
@@ -3299,13 +3251,7 @@ function renderMallTab(){
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="printMallReport()">🖨 طباعة التقرير ده</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="document.getElementById('mallReportImageInput').click()">📷 إضافة صورة للتقرير</button>
     <input type="file" id="mallReportImageInput" accept="image/*" capture="environment" style="display:none" onchange="attachReportImage(event)">
-    ${mallViewReportNo === 'open' ? `<button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="openMallCloseConfirm()">🔒 إغلاق التقرير الحالي وابدأ تقرير جديد</button>` : ''}
-    ${mallViewReportNo !== 'open' ? (
-      pendingReopenReportNo === mallViewReportNo
-        ? `<button class="btn" style="flex:none;padding:8px 16px;background:var(--red-dim);color:var(--red);" onclick="requestReopenMallReport(${mallViewReportNo})">تأكيد إعادة الفتح</button>
-           <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="cancelReopenMall()">إلغاء</button>`
-        : `<button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="requestReopenMallReport(${mallViewReportNo})">🔓 إعادة فتح هذا التقرير</button>`
-    ) : ''}
+    ${mallViewReportNo === 'open' ? `<button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="closeMallReport()">🔒 إغلاق التقرير الحالي وابدأ تقرير جديد</button>` : ''}
   </div>`;
 
   if(reportImageUrls.length > 0){
@@ -3963,11 +3909,6 @@ document.getElementById('payConfirmCancelBtn').addEventListener('click', closePa
 document.getElementById('payConfirmBtn').addEventListener('click', handlePayConfirm);
 document.getElementById('payConfirmModalBg').addEventListener('click', (e) => {
   if(e.target.id === 'payConfirmModalBg') closePayConfirmModal();
-});
-document.getElementById('mallCloseConfirmCancelBtn').addEventListener('click', closeMallCloseConfirmModal);
-document.getElementById('mallCloseConfirmBtn').addEventListener('click', closeMallReport);
-document.getElementById('mallCloseConfirmModalBg').addEventListener('click', (e) => {
-  if(e.target.id === 'mallCloseConfirmModalBg') closeMallCloseConfirmModal();
 });
 
 /* ====== شاشة القفل ====== */
