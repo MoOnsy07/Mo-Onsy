@@ -587,6 +587,7 @@ let mallInvoices = [];
 let mallViewMonth = null;   // 'YYYY-MM' أو null (لسه مختارش)
 let mallViewDate = null;    // 'YYYY-MM-DD' أو null
 let mallViewReportNo = 'open'; // 'open' = التقرير الحالي اللي لسه ما اتقفلش، أو رقم تقرير مقفول
+let pendingReopenReportNo = null;
 let mallSearchQuery = '';
 let mallSummaryMode = false;
 let subsReportMonth = null;
@@ -3103,6 +3104,25 @@ async function closeMallReport(){
   showToast(`تم إغلاق التقرير رقم ${nextNo} — أي فاتورة جديدة النهاردة هتبقى في تقرير جديد`);
 }
 
+async function requestReopenMallReport(reportNo){
+  if(pendingReopenReportNo !== reportNo){
+    pendingReopenReportNo = reportNo;
+    render();
+    return;
+  }
+  pendingReopenReportNo = null;
+  const invoicesInReport = mallInvoices.filter(m => m.reportNo === reportNo);
+  invoicesInReport.forEach(m => { m.reportNo = null; });
+  await saveMallInvoices();
+  mallViewReportNo = 'open';
+  render();
+  showToast(`تم فتح التقرير رقم ${reportNo} تاني، وبقت فواتيره ضمن التقرير المفتوح`);
+}
+function cancelReopenMall(){
+  pendingReopenReportNo = null;
+  render();
+}
+
 function renderMallInvoiceRow(m, showReportCol){
   return `<tr>
     <td>${escapeHtml(m.supplier)}</td>
@@ -3280,6 +3300,12 @@ function renderMallTab(){
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="document.getElementById('mallReportImageInput').click()">📷 إضافة صورة للتقرير</button>
     <input type="file" id="mallReportImageInput" accept="image/*" capture="environment" style="display:none" onchange="attachReportImage(event)">
     ${mallViewReportNo === 'open' ? `<button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="openMallCloseConfirm()">🔒 إغلاق التقرير الحالي وابدأ تقرير جديد</button>` : ''}
+    ${mallViewReportNo !== 'open' ? (
+      pendingReopenReportNo === mallViewReportNo
+        ? `<button class="btn" style="flex:none;padding:8px 16px;background:var(--red-dim);color:var(--red);" onclick="requestReopenMallReport(${mallViewReportNo})">تأكيد إعادة الفتح</button>
+           <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="cancelReopenMall()">إلغاء</button>`
+        : `<button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="requestReopenMallReport(${mallViewReportNo})">🔓 إعادة فتح هذا التقرير</button>`
+    ) : ''}
   </div>`;
 
   if(reportImageUrls.length > 0){
