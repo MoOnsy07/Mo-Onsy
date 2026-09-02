@@ -1732,9 +1732,18 @@ async function handlePaymentBulkSave(){
 }
 
 /* ====== رفع شيت إكسل يومي (بيستورد بس الصفوف الجديدة اللي زودتها عن آخر مرة) ====== */
+function normalizeArabicText(text){
+  return (text||'')
+    .replace(/[إأآا]/g, 'ا')   // توحيد كل أشكال الألف والهمزة
+    .replace(/ة/g, 'ه')        // توحيد التاء المربوطة والهاء
+    .replace(/[\u200e\u200f\u064b-\u065f]/g, '') // شيل علامات الاتجاه والتشكيل الخفية
+    .trim()
+    .toLowerCase();
+}
+
 function normalizeReceivedMethod(text){
-  const t = (text||'').toLowerCase();
-  if(t.includes('انستا') || t.includes('إنستا') || t.includes('instapay')) return 'instapay';
+  const t = normalizeArabicText(text);
+  if(t.includes('انستا') || t.includes('instapay')) return 'instapay';
   if(t.includes('فودافون') || t.includes('vodafone')) return 'vodafone_cash';
   if(t.includes('اتصالات') || t.includes('etisalat')) return 'etisalat_cash';
   return 'other';
@@ -1757,6 +1766,27 @@ function parseExcelDateValue(val){
   return new Date().toISOString().slice(0,10);
 }
 
+/* بتدور على كل عمود باسمه في صف العناوين، بدل ما تفترض ترتيب ثابت — أضمن لو العمودين اتبدلوا بالغلط */
+function mapExcelHeaders(headerRow){
+  const aliases = {
+    service: ['الخدمة'],
+    contact: ['العميل / رقم التواصل', 'العميل', 'رقم التواصل', 'رقم / اكونت', 'رقم/اكونت'],
+    method: ['طريقة الدفع', 'طريقة الاستلام'],
+    date: ['التاريخ'],
+    cost: ['التكلفة'],
+    received: ['اللي العميل بعته', 'المستلم', 'المبلغ المستلم'],
+    profit: ['الربح'],
+    currency: ['نوع العملة', 'العملة']
+  };
+  const defaults = { service:0, contact:1, method:2, date:3, cost:4, received:5, profit:6, currency:7 };
+  const map = {};
+  Object.keys(aliases).forEach(key => {
+    const idx = headerRow.findIndex(h => aliases[key].some(a => normalizeArabicText(h) === normalizeArabicText(a)));
+    map[key] = idx > -1 ? idx : defaults[key];
+  });
+  return map;
+}
+
 async function handlePaymentExcelUpload(event){
   const file = event.target.files[0];
   if(!file) return;
@@ -1777,6 +1807,8 @@ async function handlePaymentExcelUpload(event){
     for(const sheetName of wb.SheetNames){
       const sheet = wb.Sheets[sheetName];
       const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      if(rows.length === 0) continue;
+      const cols = mapExcelHeaders(rows[0]);
       const dataRows = rows.slice(1).filter(r => r.some(c => c !== '' && c !== null && c !== undefined));
       const totalCount = dataRows.length;
       const lastCount = paymentsImportSheetCounts[sheetName] || 0;
@@ -1786,14 +1818,14 @@ async function handlePaymentExcelUpload(event){
 
       let addedInSheet = 0;
       newRows.forEach((r, i) => {
-        const service = String(r[0] || '').trim();
-        const contactValue = String(r[1] || '').trim();
-        const methodRaw = String(r[2] || '').trim();
-        const dateRaw = r[3];
-        const cost = parseFloat(r[4]) || 0;
-        const receivedRaw = r[5];
-        const profit = parseFloat(r[6]) || 0;
-        const currencyRaw = String(r[7] || '').trim();
+        const service = String(r[cols.service] || '').trim();
+        const contactValue = String(r[cols.contact] || '').trim();
+        const methodRaw = String(r[cols.method] || '').trim();
+        const dateRaw = r[cols.date];
+        const cost = parseFloat(r[cols.cost]) || 0;
+        const receivedRaw = r[cols.received];
+        const profit = parseFloat(r[cols.profit]) || 0;
+        const currencyRaw = String(r[cols.currency] || '').trim();
         if(!service && !cost) return;
 
         const received = (receivedRaw !== '' && receivedRaw !== null && receivedRaw !== undefined)
