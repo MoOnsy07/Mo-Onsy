@@ -1760,7 +1760,15 @@ function normalizeCurrency(text){
 function parseExcelDateValue(val){
   if(val instanceof Date && !isNaN(val)) return toISODateLocal(val);
   if(typeof val === 'string' && val.trim()){
-    const d = new Date(val);
+    const s = val.trim();
+    // صيغة سنة-شهر-يوم (مش فيها لبس، زي 2026-09-05)
+    let m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/);
+    if(m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+    // صيغة يوم-شهر-سنة (الشكل المصري المعتاد، زي 5/9/2026 يعني 5 سبتمبر)
+    m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+    if(m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+    // أي صيغة تانية، نسيب المتصفح يحاول يفهمها
+    const d = new Date(s);
     if(!isNaN(d)) return toISODateLocal(d);
   }
   return new Date().toISOString().slice(0,10);
