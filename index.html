@@ -615,6 +615,7 @@ let editingTxId = null;
 let activeTab = 'subs';
 let sideMenuOpen = false;
 let paymentsImportSheetCounts = {}; // { 'اسم الشيت': عدد الصفوف اللي اتسجلت آخر مرة }
+let pendingResetSheetName = null;
 let paymentsMonthFilter = null;
 let paymentsSearchQuery = '';
 let subsContactSearch = '';
@@ -1280,6 +1281,21 @@ async function savePaymentsImportSheetCount(sheetName, count){
   }catch(e){
     console.error('save import state error', e);
   }
+}
+
+function requestResetSheet(sheetName){
+  pendingResetSheetName = sheetName;
+  render();
+}
+function cancelResetSheet(){
+  pendingResetSheetName = null;
+  render();
+}
+async function resetPaymentsImportSheet(sheetName){
+  pendingResetSheetName = null;
+  await savePaymentsImportSheetCount(sheetName, 0);
+  render();
+  showToast(`تمام، الشيت "${sheetName}" هيتقرا من الصف الأول تاني في المرة الجاية`);
 }
 
 
@@ -3869,8 +3885,21 @@ function renderPaymentsTab(){
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="openPaymentBulkModal()">📦 إضافة عدة دفعات دفعة واحدة</button>
     <button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="document.getElementById('paymentExcelInput').click()">📤 رفع شيت إكسل اليومي</button>
     <input type="file" id="paymentExcelInput" accept=".xlsx,.xls" style="display:none" onchange="handlePaymentExcelUpload(event)">
-    <span style="font-size:11.5px;color:var(--muted);align-self:center;">${Object.keys(paymentsImportSheetCounts).length ? 'شيتات متتبّعة: ' + Object.entries(paymentsImportSheetCounts).map(([n,c])=>n+' ('+c+')').join('، ') : 'لسه ما رفعتش شيت'}</span>
   </div>`;
+
+  if(Object.keys(paymentsImportSheetCounts).length > 0){
+    html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+      ${Object.entries(paymentsImportSheetCounts).map(([n,c]) => `
+        <span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:5px 6px 5px 10px;font-size:11.5px;color:var(--muted);">
+          ${n} (${c})
+          ${pendingResetSheetName === n
+            ? `<button class="icon-btn" style="width:auto;padding:0 8px;font-size:10.5px;background:var(--red-dim);color:var(--red);" onclick="resetPaymentsImportSheet('${n}')">تأكيد الإعادة</button>
+               <button class="icon-btn" style="width:22px;height:22px;font-size:10.5px;" onclick="cancelResetSheet()">↩</button>`
+            : `<button class="icon-btn" style="width:22px;height:22px;font-size:10.5px;" onclick="requestResetSheet('${n}')" title="إعادة ضبط الشيت ده من الأول">🔄</button>`
+          }
+        </span>`).join('')}
+    </div>`;
+  }
 
   html += `<div class="calc-card" style="margin-bottom:16px;padding:14px 16px;">
     <label style="margin-top:0;">🔍 دور باسم الخدمة أو العميل</label>
