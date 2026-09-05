@@ -240,6 +240,20 @@
     border-top:1px solid var(--border);margin-top:8px;padding-top:12px;
     font-size:17px;font-weight:800;color:var(--mint);font-family:'Cairo',sans-serif;
   }
+
+  .cat-card{
+    background:linear-gradient(160deg, var(--surface), var(--surface-2));
+    border:1px solid var(--border); border-radius:12px; padding:16px 16px 14px;
+    box-shadow:0 2px 8px rgba(0,0,0,0.15);
+  }
+  .cat-top{display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:8px;}
+  .cat-name{font-size:12.5px; color:var(--muted); font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .cat-pct{font-size:10.5px; font-weight:800; padding:3px 8px; border-radius:99px; flex:none;}
+  .cat-amount{font-family:'Cairo',sans-serif; font-weight:800; font-size:21px; margin-bottom:12px;}
+  .cat-amount .unit{font-size:12px; color:var(--muted); font-weight:600; margin-right:3px;}
+  .cat-bar-track{height:6px; border-radius:99px; background:var(--surface-2); overflow:hidden;}
+  .cat-bar-fill{height:100%; border-radius:99px; transition:width 0.3s ease;}
+
   .print-only{ display:none; }
 
   @media print{
@@ -417,7 +431,10 @@
     </select>
     <label>التاريخ</label>
     <input id="tx_date" type="date">
-    <label>البند</label>
+    <label>القسم الرئيسي</label>
+    <input id="tx_mainCategory" list="txMainCategoriesList" placeholder="مثال: بيت، عمل، شخصي">
+    <datalist id="txMainCategoriesList"></datalist>
+    <label>التفاصيل (إيه بالظبط؟)</label>
     <input id="tx_desc" list="txCategoriesList" placeholder="مثال: إيجار المكتب، أو تحصيل اشتراك عميل">
     <datalist id="txCategoriesList"></datalist>
     <label>المبلغ (جنيه)</label>
@@ -725,6 +742,7 @@ function toRemoteTxShape(t){
     date: t.date,
     type: t.type,
     description: t.description || null,
+    main_category: t.mainCategory || null,
     amount: t.amount || 0,
     account: t.account || 'cash'
   };
@@ -736,6 +754,7 @@ function fromRemoteTxShape(r){
     date: r.date,
     type: r.type,
     description: r.description,
+    mainCategory: r.main_category || '',
     amount: r.amount,
     account: r.account || 'cash'
   };
@@ -1985,6 +2004,7 @@ function openTxModal(t){
   document.getElementById('txModalTitle').textContent = t ? 'تعديل معاملة' : 'إضافة معاملة';
   document.getElementById('tx_type').value = t ? t.type : 'income';
   document.getElementById('tx_date').value = t ? t.date : new Date().toISOString().slice(0,10);
+  document.getElementById('tx_mainCategory').value = t ? (t.mainCategory || '') : '';
   document.getElementById('tx_desc').value = t ? (t.description || '') : '';
   document.getElementById('tx_amount').value = t ? t.amount : '';
   document.getElementById('txFormError').style.display = 'none';
@@ -1998,17 +2018,20 @@ function closeTxModal(){
 function populateTxCategoryList(){
   const cats = [...new Set(transactions.map(t => t.description).filter(Boolean))];
   document.getElementById('txCategoriesList').innerHTML = cats.map(v => `<option value="${escapeHtml(v)}">`).join('');
+  const mainCats = [...new Set(transactions.map(t => t.mainCategory).filter(Boolean))];
+  document.getElementById('txMainCategoriesList').innerHTML = mainCats.map(v => `<option value="${escapeHtml(v)}">`).join('');
 }
 
 async function handleTxSave(){
   const type = document.getElementById('tx_type').value;
   const date = document.getElementById('tx_date').value;
+  const mainCategory = document.getElementById('tx_mainCategory').value.trim();
   const description = document.getElementById('tx_desc').value.trim();
   const amount = parseFloat(document.getElementById('tx_amount').value) || 0;
 
   const errEl = document.getElementById('txFormError');
-  if(!date || !amount || !description){
-    errEl.textContent = 'من فضلك اكتب البند، واختار التاريخ، واكتب مبلغ صحيح';
+  if(!date || !amount || !mainCategory || !description){
+    errEl.textContent = 'من فضلك اختار القسم واكتب التفاصيل والتاريخ ومبلغ صحيح';
     errEl.style.display = 'block';
     return;
   }
@@ -2017,12 +2040,12 @@ async function handleTxSave(){
   if(editingTxId){
     const idx = transactions.findIndex(t => t.id === editingTxId);
     if(idx > -1){
-      transactions[idx] = {...transactions[idx], type, date, description, amount};
+      transactions[idx] = {...transactions[idx], type, date, mainCategory, description, amount};
     }
   } else {
     transactions.push({
       id: 'tx_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
-      type, date, description, amount
+      type, date, mainCategory, description, amount
     });
   }
   await saveTransactions();
@@ -4026,6 +4049,20 @@ function switchLedgerMonth(val){
   render();
 }
 
+function categoryCardsHtml(entries, total, colorVar, dimVar){
+  return entries.map(([cat, amt]) => {
+    const pct = total > 0 ? Math.round((amt/total)*100) : 0;
+    return `<div class="cat-card">
+      <div class="cat-top">
+        <span class="cat-name" title="${escapeHtml(cat)}">${escapeHtml(cat)}</span>
+        <span class="cat-pct" style="background:${dimVar};color:${colorVar};">${pct}%</span>
+      </div>
+      <div class="cat-amount" style="color:${colorVar};">${amt.toFixed(2)}<span class="unit">ج.م</span></div>
+      <div class="cat-bar-track"><div class="cat-bar-fill" style="width:${pct}%;background:${colorVar};"></div></div>
+    </div>`;
+  }).join('');
+}
+
 function renderLedgerTab(){
   const months = getAvailableMonths(transactions, 'date');
   const filtered = ledgerMonthFilter
@@ -4038,14 +4075,14 @@ function renderLedgerTab(){
   const expenseByCategory = {};
   const incomeByCategory = {};
   filtered.forEach(t => {
-    const cat = t.description || 'بدون بند';
+    const cat = t.mainCategory || 'بدون قسم';
     if(t.type === 'expense') expenseByCategory[cat] = (expenseByCategory[cat]||0) + (t.amount||0);
     else incomeByCategory[cat] = (incomeByCategory[cat]||0) + (t.amount||0);
   });
   const expenseEntries = Object.entries(expenseByCategory).sort((a,b)=>b[1]-a[1]);
   const incomeEntries = Object.entries(incomeByCategory).sort((a,b)=>b[1]-a[1]);
 
-  let html = `<p class="sub">تتبّع المصروف والإيراد، مقسّم لكل بند لوحده</p>`;
+  let html = `<p class="sub">تتبّع المصروف والإيراد، مقسّم لكل قسم رئيسي لوحده</p>`;
 
   // شرائح الشهور (التقفيل الشهري)
   html += `<div class="month-pills">
@@ -4068,27 +4105,21 @@ function renderLedgerTab(){
     </div>
   </div>`;
 
-  html += `<div class="section-title">المصروف حسب البند <span class="count-pill" style="background:var(--red-dim);color:var(--red);">${expenseEntries.length}</span></div>`;
+  html += `<div class="section-title">المصروف حسب القسم الرئيسي <span class="count-pill" style="background:var(--red-dim);color:var(--red);">${expenseEntries.length}</span></div>`;
   if(expenseEntries.length === 0){
     html += `<div class="empty">مفيش مصروفات مسجّلة في الفترة دي.</div>`;
   } else {
     html += `<div class="cards" style="margin-bottom:24px;">
-      ${expenseEntries.map(([cat, total]) => `<div class="card" style="cursor:default;border-color:var(--red);">
-        <p class="client" style="margin-bottom:6px;">${escapeHtml(cat)}</p>
-        <p class="store" style="font-size:18px;color:var(--red);">${total.toFixed(2)} ج.م</p>
-      </div>`).join('')}
+      ${categoryCardsHtml(expenseEntries, periodExpense, 'var(--red)', 'var(--red-dim)')}
     </div>`;
   }
 
-  html += `<div class="section-title">الإيراد حسب البند <span class="count-pill" style="background:var(--mint-dim);color:var(--mint);">${incomeEntries.length}</span></div>`;
+  html += `<div class="section-title">الإيراد حسب القسم الرئيسي <span class="count-pill" style="background:var(--mint-dim);color:var(--mint);">${incomeEntries.length}</span></div>`;
   if(incomeEntries.length === 0){
     html += `<div class="empty">مفيش إيراد مسجّل في الفترة دي.</div>`;
   } else {
     html += `<div class="cards" style="margin-bottom:24px;">
-      ${incomeEntries.map(([cat, total]) => `<div class="card" style="cursor:default;border-color:var(--mint);">
-        <p class="client" style="margin-bottom:6px;">${escapeHtml(cat)}</p>
-        <p class="store" style="font-size:18px;color:var(--mint);">${total.toFixed(2)} ج.م</p>
-      </div>`).join('')}
+      ${categoryCardsHtml(incomeEntries, periodIncome, 'var(--mint)', 'var(--mint-dim)')}
     </div>`;
   }
 
@@ -4097,12 +4128,13 @@ function renderLedgerTab(){
     html += `<div class="empty">مفيش معاملات مسجلة في الفترة دي. دوس على زرار (+) تحت عشان تضيف معاملة.</div>`;
   } else {
     html += `<table><thead><tr>
-      <th>التاريخ</th><th>النوع</th><th>البند</th><th>المبلغ</th><th></th>
+      <th>التاريخ</th><th>النوع</th><th>القسم</th><th>التفاصيل</th><th>المبلغ</th><th></th>
     </tr></thead><tbody>`;
     sorted.forEach(t => {
       html += `<tr>
         <td>${t.date}</td>
         <td><span class="svc-tag" style="${t.type==='income' ? 'color:var(--mint);border-color:var(--mint);' : 'color:var(--red);border-color:var(--red);'}">${t.type==='income' ? 'إيراد' : 'مصروف'}</span></td>
+        <td>${fmtService(t.mainCategory || 'بدون قسم')}</td>
         <td>${escapeHtml(t.description || '—')}</td>
         <td style="color:${t.type==='income' ? 'var(--mint)' : 'var(--red)'};">${t.type==='income'?'+':'-'}${(t.amount||0).toFixed(2)} ج.م</td>
         <td>
