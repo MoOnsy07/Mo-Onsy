@@ -625,6 +625,7 @@ let mallViewReportNo = 'open'; // 'open' = التقرير الحالي اللي 
 let pendingReopenReportNo = null;
 let mallSearchQuery = '';
 let mallSummaryMode = false;
+let mallRankingMode = false;
 let subsReportMonth = null;
 let pendingDeleteMallId = null;
 let editingPaymentId = null;
@@ -3446,13 +3447,77 @@ function renderMallInvoiceRow(m, showReportCol){
 
 function toggleMallSummary(){
   mallSummaryMode = !mallSummaryMode;
+  mallRankingMode = false;
+  render();
+}
+
+function toggleMallRanking(){
+  mallRankingMode = !mallRankingMode;
+  mallSummaryMode = false;
   render();
 }
 
 function jumpToMallSupplier(encodedName){
   mallSummaryMode = false;
+  mallRankingMode = false;
   mallSearchQuery = decodeURIComponent(encodedName);
   render();
+}
+
+function jumpToMallReport(val){
+  mallRankingMode = false;
+  if(val === 'open'){
+    mallViewReportNo = 'open';
+  } else {
+    const reportNo = parseInt(val, 10);
+    const anyInvoice = mallInvoices.find(m => m.reportNo === reportNo);
+    if(anyInvoice){
+      mallViewMonth = anyInvoice.date.slice(0,7);
+      mallViewDate = anyInvoice.date;
+      mallViewReportNo = reportNo;
+    }
+  }
+  render();
+}
+
+function renderMallReportsRanking(){
+  const groups = {};
+  mallInvoices.forEach(m => {
+    const key = m.reportNo || 'open';
+    if(!groups[key]) groups[key] = { key, count: 0, total: 0, dates: new Set() };
+    groups[key].count += 1;
+    groups[key].total += (m.total || 0);
+    groups[key].dates.add(m.date);
+  });
+  const ranked = Object.values(groups).sort((a,b) => b.total - a.total);
+
+  let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
+  html += `<div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;" class="no-print">
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallRanking()">↩ رجوع لعرض التقارير</button>
+  </div>`;
+
+  html += `<div class="section-title">ترتيب التقارير حسب القيمة <span class="count-pill">${ranked.length}</span></div>`;
+  if(ranked.length === 0){
+    html += `<div class="empty">لسه مفيش فواتير مسجّلة.</div>`;
+  } else {
+    html += `<div class="cards">`;
+    ranked.forEach((g, i) => {
+      const dateRange = [...g.dates].sort();
+      const dateLabel = dateRange.length === 1 ? dateRange[0] : `${dateRange[0]} → ${dateRange[dateRange.length-1]}`;
+      const label = g.key === 'open' ? 'التقرير الحالي (مفتوح)' : `تقرير رقم ${g.key}`;
+      html += `<div class="card" style="cursor:pointer;" onclick="jumpToMallReport('${g.key}')">
+        <span class="badge" style="background:var(--surface-2);color:var(--brass);">#${i+1}</span>
+        <p class="store">${label}</p>
+        <p class="client" style="margin-bottom:10px;">${g.count} فاتورة &middot; ${dateLabel}</p>
+        <div class="meta">
+          <span>الإجمالي</span>
+          <span class="amount">${formatNumber(g.total)}</span>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+  return html;
 }
 
 function renderMallSupplierSummary(){
@@ -3506,6 +3571,9 @@ function renderMallTab(){
   if(mallSummaryMode){
     return renderMallSupplierSummary();
   }
+  if(mallRankingMode){
+    return renderMallReportsRanking();
+  }
 
   // ====== وضع البحث: بيدور بالمورد في كل التقارير مهما كان تاريخها ======
   const q = mallSearchQuery.trim().toLowerCase();
@@ -3517,6 +3585,7 @@ function renderMallTab(){
     let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
     html += `<div style="display:flex;gap:10px;margin-bottom:12px;" class="no-print">
       <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallSummary()">📊 ملخص الموردين</button>
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallRanking()">📈 ترتيب التقارير</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="openMallBulkModal()">📦 إضافة عدة فواتير لمورد واحد</button>
     </div>`;
     html += `<div class="calc-card no-print" style="margin-bottom:18px;padding:14px 16px;">
@@ -3560,6 +3629,7 @@ function renderMallTab(){
 
   html += `<div style="display:flex;gap:10px;margin-bottom:12px;" class="no-print">
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallSummary()">📊 ملخص الموردين</button>
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallRanking()">📈 ترتيب التقارير</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="openMallBulkModal()">📦 إضافة عدة فواتير لمورد واحد</button>
   </div>`;
 
