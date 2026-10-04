@@ -600,6 +600,57 @@
   </div>
 </div>
 
+<div class="modal-bg" id="cardModalBg">
+  <div class="modal">
+    <h2>إضافة كارت كريدت كارد</h2>
+    <label>اسم الكارت (مثلاً: CIB)</label>
+    <input id="card_name" placeholder="اسم الكارت">
+    <label>يوم قفل كشف الحساب (شهريًا)</label>
+    <input id="card_closeDay" type="number" min="1" max="31" placeholder="مثلاً 20">
+    <label>يوم آخر ميعاد للسداد (شهريًا)</label>
+    <input id="card_dueDay" type="number" min="1" max="31" placeholder="مثلاً 15">
+    <label>إجمالي المديونية الحالية (جنيه)</label>
+    <input id="card_totalDebt" type="number" step="0.01" placeholder="0.00">
+    <p id="cardFormError" style="color:var(--red);font-size:12.5px;margin:14px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="cardCancelBtn">إلغاء</button>
+      <button class="btn btn-primary" id="cardSaveBtn">حفظ</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="debtModalBg">
+  <div class="modal">
+    <h2>إضافة دين أو قسط</h2>
+    <label>اسم الدين / الجهة</label>
+    <input id="debt_name" placeholder="مثلاً: قسط الموبايل">
+    <label>تاريخ الاستحقاق القادم</label>
+    <input id="debt_dueDate" type="date">
+    <label>القسط الشهري (اختياري)</label>
+    <input id="debt_monthly" type="number" step="0.01" placeholder="0.00">
+    <label>إجمالي المتبقي من الدين (جنيه)</label>
+    <input id="debt_totalDebt" type="number" step="0.01" placeholder="0.00">
+    <p id="debtFormError" style="color:var(--red);font-size:12.5px;margin:14px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="debtCancelBtn">إلغاء</button>
+      <button class="btn btn-primary" id="debtSaveBtn">حفظ</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="payModalBg">
+  <div class="modal">
+    <h2>تسجيل دفعة</h2>
+    <label>المبلغ المسدد دلوقتي (جنيه)</label>
+    <input id="pay_amount" type="number" step="0.01" placeholder="0.00">
+    <p id="payFormError" style="color:var(--red);font-size:12.5px;margin:14px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="payCancelBtn">إلغاء</button>
+      <button class="btn btn-primary" id="paySaveBtn">تأكيد</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" style="position:fixed;bottom:28px;right:28px;background:#171E2E;border:1px solid #2DD4BF;color:#2DD4BF;padding:12px 18px;border-radius:10px;font-size:13.5px;display:none;z-index:60;font-family:'IBM Plex Sans Arabic',sans-serif;max-width:280px;"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -642,6 +693,11 @@ let paymentsDateTo = '';
 let clientsSearchQuery = '';
 let openClientKey = null;
 let ledgerMonthFilter = null;
+let creditCards = [];
+let myDebts = [];
+let pendingDeleteCardId = null;
+let pendingDeleteDebtId = null;
+let payTarget = null; // { kind: 'card' | 'debt', id }
 
 /* ====== إعدادات قاعدة البيانات (Supabase) ======
    حط هنا الـ Project URL والـ anon public key من صفحة Settings > API في مشروعك على supabase.com
@@ -787,6 +843,19 @@ function toRemoteDebtorShape(d){
 }
 function fromRemoteDebtorShape(r){
   return { id: r.id, name: r.name, amount: r.amount || 0 };
+}
+
+function toRemoteCardShape(c){
+  return { id: c.id, name: c.name, close_day: c.closeDay, due_day: c.dueDay, total_debt: c.totalDebt || 0, payments: c.payments || [] };
+}
+function fromRemoteCardShape(r){
+  return { id: r.id, name: r.name, closeDay: r.close_day, dueDay: r.due_day, totalDebt: r.total_debt || 0, payments: r.payments || [] };
+}
+function toRemoteDebtShape(d){
+  return { id: d.id, name: d.name, due_date: d.dueDate, monthly_installment: d.monthlyInstallment || null, total_debt: d.totalDebt || 0, payments: d.payments || [] };
+}
+function fromRemoteDebtShape(r){
+  return { id: r.id, name: r.name, dueDate: r.due_date, monthlyInstallment: r.monthly_installment, totalDebt: r.total_debt || 0, payments: r.payments || [] };
 }
 
 function toRemoteInvoiceShape(inv){
@@ -1036,6 +1105,8 @@ async function loadData(){
   await loadVaultMeta();
   await loadPaymentsImportState();
   await loadDebtors();
+  await loadCreditCards();
+  await loadMyDebts();
   await loadInvoices();
   await loadMallInvoices();
   fetchLiveRate();
@@ -1190,6 +1261,104 @@ async function deleteRemoteDebtorRow(id){
     });
   }catch(e){
     console.error('delete debtor error', e);
+    showToast('حصل خطأ في الحذف', true);
+  }
+}
+
+async function loadCreditCards(){
+  if(!isConfigured()) return;
+  try{
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/credit_cards?select=*`, { headers: sbHeaders() });
+    if(!res.ok) throw new Error('fetch failed: ' + res.status);
+    const rows = await res.json();
+    creditCards = rows.map(fromRemoteCardShape);
+  }catch(e){
+    console.error('load credit cards error', e);
+    showToast('حصل خطأ في تحميل الكروت (اتأكدت من إنشاء جدول credit_cards؟)', true);
+    creditCards = [];
+  }
+}
+async function saveCreditCard(c){
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/credit_cards`, {
+      method: 'POST',
+      headers: sbHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify([toRemoteCardShape(c)])
+    });
+  }catch(e){
+    console.error('save credit card error', e);
+    showToast('حصل خطأ في حفظ الكارت', true);
+  }
+}
+async function patchCardPayments(id, payments){
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/credit_cards?id=eq.${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: sbHeaders({ 'Prefer': 'return=minimal' }),
+      body: JSON.stringify({ payments })
+    });
+  }catch(e){
+    console.error('patch card payments error', e);
+    showToast('حصل خطأ في حفظ الدفعة', true);
+  }
+}
+async function deleteRemoteCard(id){
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/credit_cards?id=eq.${encodeURIComponent(id)}`, { method: 'DELETE', headers: sbHeaders() });
+  }catch(e){
+    console.error('delete card error', e);
+    showToast('حصل خطأ في الحذف', true);
+  }
+}
+
+async function loadMyDebts(){
+  if(!isConfigured()) return;
+  try{
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/my_debts?select=*`, { headers: sbHeaders() });
+    if(!res.ok) throw new Error('fetch failed: ' + res.status);
+    const rows = await res.json();
+    myDebts = rows.map(fromRemoteDebtShape);
+  }catch(e){
+    console.error('load debts error', e);
+    showToast('حصل خطأ في تحميل الديون (اتأكدت من إنشاء جدول my_debts؟)', true);
+    myDebts = [];
+  }
+}
+async function saveMyDebt(d){
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/my_debts`, {
+      method: 'POST',
+      headers: sbHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify([toRemoteDebtShape(d)])
+    });
+  }catch(e){
+    console.error('save debt error', e);
+    showToast('حصل خطأ في حفظ الدين', true);
+  }
+}
+async function patchDebtPayments(id, payments){
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/my_debts?id=eq.${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: sbHeaders({ 'Prefer': 'return=minimal' }),
+      body: JSON.stringify({ payments })
+    });
+  }catch(e){
+    console.error('patch debt payments error', e);
+    showToast('حصل خطأ في حفظ الدفعة', true);
+  }
+}
+async function deleteRemoteDebt(id){
+  if(!isConfigured()) return;
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/my_debts?id=eq.${encodeURIComponent(id)}`, { method: 'DELETE', headers: sbHeaders() });
+  }catch(e){
+    console.error('delete debt error', e);
     showToast('حصل خطأ في الحذف', true);
   }
 }
@@ -2450,7 +2619,7 @@ function switchTab(tab){
 
 const TAB_LABELS = {
   subs: 'الاشتراكات', payments: 'مدفوعات', profit: 'الربح', services: 'الخدمات',
-  clients: 'العملاء', invoices: 'الفواتير', mall: 'المول', ledger: 'مصاريفي'
+  clients: 'العملاء', invoices: 'الفواتير', mall: 'المول', ledger: 'مصاريفي', cards: 'كروت وديون'
 };
 
 function toggleSideMenu(){
@@ -2517,6 +2686,9 @@ function render(){
     fab.innerHTML = '+ إضافة معاملة';
     fab.onclick = () => openTxModal(null);
     html += renderLedgerTab();
+  } else if(activeTab === 'cards'){
+    fab.style.display = 'none';
+    html += renderCardsTab();
   } else {
     activeTab = 'subs';
     fab.style.display = 'flex';
@@ -4225,6 +4397,263 @@ function renderLedgerTab(){
   return html;
 }
 
+/* ====== كروت وديون ====== */
+function daysInMonthOf(y, m){ return new Date(y, m + 1, 0).getDate(); }
+function nextOccurrenceForDay(day){
+  const today = new Date(); today.setHours(0,0,0,0);
+  let y = today.getFullYear(), m = today.getMonth();
+  let d = Math.min(day, daysInMonthOf(y, m));
+  let candidate = new Date(y, m, d);
+  if(candidate < today){
+    m += 1; if(m > 11){ m = 0; y += 1; }
+    d = Math.min(day, daysInMonthOf(y, m));
+    candidate = new Date(y, m, d);
+  }
+  return candidate;
+}
+function daysUntilDate(date){
+  const today = new Date(); today.setHours(0,0,0,0);
+  const t = new Date(date); t.setHours(0,0,0,0);
+  return Math.round((t - today) / 86400000);
+}
+function remainingOf(item){
+  const paid = (item.payments || []).reduce((s,p)=>s+Number(p.amount||0),0);
+  return Math.max(0, Number(item.totalDebt||0) - paid);
+}
+function paidOf(item){
+  return (item.payments || []).reduce((s,p)=>s+Number(p.amount||0),0);
+}
+function isFullyPaid(item){ return remainingOf(item) <= 0.004; }
+function cardsKindFor(diff, paid){
+  if(paid) return '';
+  if(diff < 0) return 'overdue';
+  if(diff === 0) return 'today';
+  if(diff <= 7) return 'soon';
+  return '';
+}
+
+function renderCardsTab(){
+  const ccEnriched = creditCards.map(c => {
+    const due = nextOccurrenceForDay(c.dueDay);
+    return { ...c, dueDateObj: due, diff: daysUntilDate(due), remaining: remainingOf(c), paidAmt: paidOf(c), paid: isFullyPaid(c) };
+  }).sort((a,b) => (a.paid - b.paid) || (a.diff - b.diff));
+
+  const dtEnriched = myDebts.map(d => {
+    const due = d.dueDate ? new Date(d.dueDate) : new Date();
+    return { ...d, dueDateObj: due, diff: daysUntilDate(due), remaining: remainingOf(d), paidAmt: paidOf(d), paid: isFullyPaid(d) };
+  }).sort((a,b) => (a.paid - b.paid) || (a.diff - b.diff));
+
+  const ccUnpaid = ccEnriched.filter(c => !c.paid);
+  const dtUnpaid = dtEnriched.filter(d => !d.paid);
+  const ccTotalRemaining = ccUnpaid.reduce((s,c)=>s+c.remaining,0);
+  const dtTotalRemaining = dtUnpaid.reduce((s,d)=>s+d.remaining,0);
+
+  let html = `<p class="sub">تابع مواعيد الكروت والديون وسدد جزء بجزء من غير ما تفوّت ميعاد</p>`;
+
+  html += `<div class="cards" style="margin-bottom:24px;">
+    <div class="card" style="cursor:default;border-color:var(--amber);">
+      <p class="client" style="margin-bottom:6px;">كروت عليها مديونية</p>
+      <p class="store" style="font-size:20px;color:var(--amber);">${ccUnpaid.length} · ${ccTotalRemaining.toFixed(2)} ج.م</p>
+    </div>
+    <div class="card" style="cursor:default;border-color:var(--red);">
+      <p class="client" style="margin-bottom:6px;">ديون وأقساط قايمة</p>
+      <p class="store" style="font-size:20px;color:var(--red);">${dtUnpaid.length} · ${dtTotalRemaining.toFixed(2)} ج.م</p>
+    </div>
+  </div>`;
+
+  html += `<div class="section-title">💳 الكريدت كارد <span class="count-pill">${ccEnriched.length}</span></div>`;
+  html += `<button class="btn btn-ghost" style="width:100%;margin-bottom:14px;" onclick="openCardModal()">+ إضافة كارت</button>`;
+  if(ccEnriched.length === 0){
+    html += `<div class="empty">لسه مفيش كروت مضافة.</div>`;
+  } else {
+    html += `<div class="cards" style="margin-bottom:26px;">${ccEnriched.map(cardHtmlCredit).join('')}</div>`;
+  }
+
+  html += `<div class="section-title">📋 الديون والأقساط <span class="count-pill">${dtEnriched.length}</span></div>`;
+  html += `<button class="btn btn-ghost" style="width:100%;margin-bottom:14px;" onclick="openDebtModal()">+ إضافة دين / قسط</button>`;
+  if(dtEnriched.length === 0){
+    html += `<div class="empty">لسه مفيش ديون أو أقساط مضافة.</div>`;
+  } else {
+    html += `<div class="cards">${dtEnriched.map(cardHtmlDebt).join('')}</div>`;
+  }
+
+  return html;
+}
+
+function statusBadgeText(item){
+  if(item.paid) return 'اتسدد بالكامل ✓';
+  if(item.diff < 0) return `متأخر ${Math.abs(item.diff)} يوم`;
+  if(item.diff === 0) return 'الميعاد النهاردة';
+  if(item.diff === 1) return 'يوم واحد باقي';
+  return `باقي ${item.diff} يوم`;
+}
+
+function cardHtmlCredit(c){
+  const kind = cardsKindFor(c.diff, c.paid);
+  const pct = c.totalDebt > 0 ? Math.min(100, Math.round((c.paidAmt / c.totalDebt) * 100)) : 0;
+  const barColor = c.paid ? 'var(--muted)' : (kind === 'overdue' ? 'var(--red)' : (kind === 'soon' ? 'var(--amber)' : 'var(--mint)'));
+  const lastPayments = (c.payments || []).slice(-3).reverse();
+  return `<div class="card ${kind}" style="${c.paid ? 'opacity:0.6;' : ''}">
+    <span class="badge ${kind || 'today'}" style="${kind ? '' : 'display:none;'}">${statusBadgeText(c)}</span>
+    <p class="store">${escapeHtml(c.name)}</p>
+    <p class="client">قفل الكشف: يوم ${c.closeDay} شهريًا &middot; السداد قبل: يوم ${c.dueDay} (${c.dueDateObj.toLocaleDateString('ar-EG',{day:'numeric',month:'short'})})</p>
+    <div class="meta">
+      <span>سددت ${c.paidAmt.toFixed(2)} من ${Number(c.totalDebt).toFixed(2)}</span>
+      <span class="amount">${c.remaining.toFixed(2)} ج.م متبقي</span>
+    </div>
+    <div class="cat-bar-track" style="margin-top:10px;"><div class="cat-bar-fill" style="width:${pct}%;background:${barColor};"></div></div>
+    ${lastPayments.length ? `<p style="color:var(--muted);font-size:11.5px;margin:8px 0 0;">آخر سداد: ${lastPayments.map(p=>Number(p.amount).toFixed(2)+' ج.م').join(' · ')}</p>` : ''}
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      ${!c.paid ? `<button class="pay-btn" style="margin-top:0;flex:1;" onclick="openPayModal('card','${c.id}')">سدد جزء</button>` : ''}
+      ${pendingDeleteCardId === c.id
+        ? `<button class="btn btn-danger" style="flex:none;padding:0 12px;font-size:12px;" onclick="deleteCard('${c.id}')">تأكيد الحذف</button>`
+        : `<button class="icon-btn" onclick="pendingDeleteCardId='${c.id}';render();" title="حذف">✕</button>`}
+    </div>
+  </div>`;
+}
+
+function cardHtmlDebt(d){
+  const kind = cardsKindFor(d.diff, d.paid);
+  const pct = d.totalDebt > 0 ? Math.min(100, Math.round((d.paidAmt / d.totalDebt) * 100)) : 0;
+  const barColor = d.paid ? 'var(--muted)' : (kind === 'overdue' ? 'var(--red)' : (kind === 'soon' ? 'var(--amber)' : 'var(--mint)'));
+  const lastPayments = (d.payments || []).slice(-3).reverse();
+  return `<div class="card ${kind}" style="${d.paid ? 'opacity:0.6;' : ''}">
+    <span class="badge ${kind || 'today'}" style="${kind ? '' : 'display:none;'}">${statusBadgeText(d)}</span>
+    <p class="store">${escapeHtml(d.name)}</p>
+    <p class="client">الاستحقاق: ${d.dueDate || '—'}${d.monthlyInstallment ? ' &middot; القسط الشهري: ' + Number(d.monthlyInstallment).toFixed(2) + ' ج.م' : ''}</p>
+    <div class="meta">
+      <span>سددت ${d.paidAmt.toFixed(2)} من ${Number(d.totalDebt).toFixed(2)}</span>
+      <span class="amount">${d.remaining.toFixed(2)} ج.م متبقي</span>
+    </div>
+    <div class="cat-bar-track" style="margin-top:10px;"><div class="cat-bar-fill" style="width:${pct}%;background:${barColor};"></div></div>
+    ${lastPayments.length ? `<p style="color:var(--muted);font-size:11.5px;margin:8px 0 0;">آخر سداد: ${lastPayments.map(p=>Number(p.amount).toFixed(2)+' ج.م').join(' · ')}</p>` : ''}
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      ${!d.paid ? `<button class="pay-btn" style="margin-top:0;flex:1;" onclick="openPayModal('debt','${d.id}')">سدد جزء</button>` : ''}
+      ${pendingDeleteDebtId === d.id
+        ? `<button class="btn btn-danger" style="flex:none;padding:0 12px;font-size:12px;" onclick="deleteDebt('${d.id}')">تأكيد الحذف</button>`
+        : `<button class="icon-btn" onclick="pendingDeleteDebtId='${d.id}';render();" title="حذف">✕</button>`}
+    </div>
+  </div>`;
+}
+
+function openCardModal(){
+  document.getElementById('card_name').value = '';
+  document.getElementById('card_closeDay').value = '';
+  document.getElementById('card_dueDay').value = '';
+  document.getElementById('card_totalDebt').value = '';
+  document.getElementById('cardFormError').style.display = 'none';
+  document.getElementById('cardModalBg').classList.add('open');
+}
+function closeCardModal(){
+  document.getElementById('cardModalBg').classList.remove('open');
+}
+async function handleCardSave(){
+  const name = document.getElementById('card_name').value.trim();
+  const closeDay = parseInt(document.getElementById('card_closeDay').value, 10);
+  const dueDay = parseInt(document.getElementById('card_dueDay').value, 10);
+  const totalDebt = parseFloat(document.getElementById('card_totalDebt').value);
+  const err = document.getElementById('cardFormError');
+  if(!name || !closeDay || !dueDay || isNaN(totalDebt)){
+    err.textContent = 'املا كل الخانات الأول';
+    err.style.display = 'block';
+    return;
+  }
+  const card = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2,7),
+    name, closeDay, dueDay, totalDebt, payments: []
+  };
+  creditCards.push(card);
+  closeCardModal();
+  render();
+  await saveCreditCard(card);
+  showToast('اتضاف الكارت');
+}
+async function deleteCard(id){
+  creditCards = creditCards.filter(c => c.id !== id);
+  pendingDeleteCardId = null;
+  render();
+  await deleteRemoteCard(id);
+}
+
+function openDebtModal(){
+  document.getElementById('debt_name').value = '';
+  document.getElementById('debt_dueDate').value = '';
+  document.getElementById('debt_monthly').value = '';
+  document.getElementById('debt_totalDebt').value = '';
+  document.getElementById('debtFormError').style.display = 'none';
+  document.getElementById('debtModalBg').classList.add('open');
+}
+function closeDebtModal(){
+  document.getElementById('debtModalBg').classList.remove('open');
+}
+async function handleDebtSave(){
+  const name = document.getElementById('debt_name').value.trim();
+  const dueDate = document.getElementById('debt_dueDate').value;
+  const monthly = document.getElementById('debt_monthly').value;
+  const totalDebt = parseFloat(document.getElementById('debt_totalDebt').value);
+  const err = document.getElementById('debtFormError');
+  if(!name || !dueDate || isNaN(totalDebt)){
+    err.textContent = 'املا اسم الدين وتاريخ الاستحقاق والإجمالي الأول';
+    err.style.display = 'block';
+    return;
+  }
+  const debt = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2,7),
+    name, dueDate, monthlyInstallment: monthly ? parseFloat(monthly) : null,
+    totalDebt, payments: []
+  };
+  myDebts.push(debt);
+  closeDebtModal();
+  render();
+  await saveMyDebt(debt);
+  showToast('اتضاف الدين');
+}
+async function deleteDebt(id){
+  myDebts = myDebts.filter(d => d.id !== id);
+  pendingDeleteDebtId = null;
+  render();
+  await deleteRemoteDebt(id);
+}
+
+function openPayModal(kind, id){
+  payTarget = { kind, id };
+  document.getElementById('pay_amount').value = '';
+  document.getElementById('payFormError').style.display = 'none';
+  document.getElementById('payModalBg').classList.add('open');
+}
+function closePayModal(){
+  payTarget = null;
+  document.getElementById('payModalBg').classList.remove('open');
+}
+async function handlePaySave(){
+  if(!payTarget) return;
+  const amount = parseFloat(document.getElementById('pay_amount').value);
+  const err = document.getElementById('payFormError');
+  if(isNaN(amount) || amount <= 0){
+    err.textContent = 'اكتب مبلغ صحيح';
+    err.style.display = 'block';
+    return;
+  }
+  const { kind, id } = payTarget;
+  const entry = { amount, date: new Date().toISOString() };
+  if(kind === 'card'){
+    const card = creditCards.find(c => c.id === id);
+    if(!card) return;
+    card.payments = [...(card.payments||[]), entry];
+    closePayModal();
+    render();
+    await patchCardPayments(id, card.payments);
+  } else {
+    const debt = myDebts.find(d => d.id === id);
+    if(!debt) return;
+    debt.payments = [...(debt.payments||[]), entry];
+    closePayModal();
+    render();
+    await patchDebtPayments(id, debt.payments);
+  }
+  showToast('اتسجلت الدفعة');
+}
+
 function isPaidToday(s){
   if(!s.lastPaid) return false;
   return s.lastPaid === new Date().toISOString().slice(0,10);
@@ -4369,6 +4798,21 @@ document.getElementById('mallCloseConfirmCancelBtn').addEventListener('click', c
 document.getElementById('mallCloseConfirmBtn').addEventListener('click', closeMallReport);
 document.getElementById('mallCloseConfirmModalBg').addEventListener('click', (e) => {
   if(e.target.id === 'mallCloseConfirmModalBg') closeMallCloseConfirmModal();
+});
+document.getElementById('cardCancelBtn').addEventListener('click', closeCardModal);
+document.getElementById('cardSaveBtn').addEventListener('click', handleCardSave);
+document.getElementById('cardModalBg').addEventListener('click', (e) => {
+  if(e.target.id === 'cardModalBg') closeCardModal();
+});
+document.getElementById('debtCancelBtn').addEventListener('click', closeDebtModal);
+document.getElementById('debtSaveBtn').addEventListener('click', handleDebtSave);
+document.getElementById('debtModalBg').addEventListener('click', (e) => {
+  if(e.target.id === 'debtModalBg') closeDebtModal();
+});
+document.getElementById('payCancelBtn').addEventListener('click', closePayModal);
+document.getElementById('paySaveBtn').addEventListener('click', handlePaySave);
+document.getElementById('payModalBg').addEventListener('click', (e) => {
+  if(e.target.id === 'payModalBg') closePayModal();
 });
 
 /* ====== شاشة القفل ====== */
