@@ -265,6 +265,26 @@
     table{ width:100%; border-collapse:collapse; }
     th,td{ border:1px solid #999; padding:6px 8px; }
   }
+
+  /* ===== سباق الموردين (لايف) ===== */
+  .mall-race{position:relative;margin-bottom:100px;}
+  .mr-row{position:absolute;inset-inline:0;top:0;height:60px;display:grid;grid-template-columns:28px 1fr auto;grid-template-rows:auto 8px;column-gap:10px;row-gap:7px;align-content:center;align-items:center;padding:0 12px;border-radius:10px;background:var(--surface);border:1px solid var(--border);cursor:pointer;transition:transform .7s cubic-bezier(.3,.8,.3,1);}
+  .mr-row.mr-flash{animation:mrflash 1.1s ease-out;}
+  @keyframes mrflash{0%{background:var(--amber-dim);}100%{background:var(--surface);}}
+  .mr-rk{color:var(--muted);font-size:13px;text-align:center;font-weight:600;}
+  .mr-nm{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .mr-nm i{font-style:normal;font-weight:400;color:var(--muted);font-size:11.5px;margin-inline-start:8px;}
+  .mr-am{font-size:14px;font-weight:700;direction:ltr;unicode-bidi:isolate;font-variant-numeric:tabular-nums;}
+  .mr-trk{grid-column:2/4;height:8px;border-radius:99px;background:var(--surface-2);overflow:hidden;}
+  .mr-fill{height:100%;width:0;border-radius:99px;background:rgba(45,212,191,.4);transition:width .7s cubic-bezier(.3,.8,.3,1);}
+  .mr-row.mr-first{border-color:var(--mint);}
+  .mr-row.mr-first .mr-fill{background:var(--mint);}
+  .mr-row.mr-first .mr-rk,.mr-row.mr-first .mr-nm{color:var(--mint);}
+  .mr-chips{display:flex;gap:6px;overflow-x:auto;margin-bottom:14px;padding-bottom:2px;}
+  .mr-chip{flex:none;background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:99px;padding:6px 13px;font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap;}
+  .mr-chip.on{border-color:var(--mint);color:var(--mint);background:var(--mint-dim);}
+  .mr-live{font-size:11.5px;color:var(--muted);margin:0 0 10px;}
+  @media (prefers-reduced-motion:reduce){.mr-row,.mr-fill{transition:none;}.mr-row.mr-flash{animation:none;}}
 </style>
 </head>
 <body>
@@ -677,6 +697,10 @@ let pendingReopenReportNo = null;
 let mallSearchQuery = '';
 let mallSummaryMode = false;
 let mallRankingMode = false;
+let mallRaceFilter = 'all';
+let mallRaceRows = {};
+let mallRaceTimer = null;
+let mallSaveBusy = 0;
 let subsReportMonth = null;
 let pendingDeleteMallId = null;
 let editingPaymentId = null;
@@ -1419,6 +1443,10 @@ async function loadMallInvoices(){
 }
 
 async function saveMallInvoices(){
+  mallSaveBusy++;
+  try{ await _saveMallInvoicesInner(); } finally { setTimeout(() => { mallSaveBusy--; }, 1500); }
+}
+async function _saveMallInvoicesInner(){
   if(!isConfigured()) return;
   try{
     await fetch(`${SUPABASE_URL}/rest/v1/mall_invoices`, {
@@ -1433,6 +1461,10 @@ async function saveMallInvoices(){
 }
 
 async function deleteRemoteMallRow(id){
+  mallSaveBusy++;
+  try{ await _deleteRemoteMallRowInner(id); } finally { setTimeout(() => { mallSaveBusy--; }, 1500); }
+}
+async function _deleteRemoteMallRowInner(id){
   if(!isConfigured()) return;
   try{
     await fetch(`${SUPABASE_URL}/rest/v1/mall_invoices?id=eq.${encodeURIComponent(id)}`, {
@@ -2699,6 +2731,7 @@ function render(){
   }
 
   app.innerHTML = html;
+  if(activeTab === 'mall' && mallSummaryMode){ updateMallRace(); startMallRacePoll(); }
 }
 
 function switchSubsContactSearch(val){
@@ -3692,51 +3725,123 @@ function renderMallReportsRanking(){
   return html;
 }
 
-function renderMallSupplierSummary(){
+/* ====== سباق الموردين (لايف) ====== */
+const MALL_RACE_H = 66;
+
+function raceFmt(n){ return (n||0).toLocaleString('en-US', { maximumFractionDigits: 2 }); }
+function mallRaceDates(){
+  return [...new Set(mallInvoices.map(m => m.date).filter(Boolean))].sort().reverse();
+}
+function mallRaceData(){
+  if(mallRaceFilter !== 'all' && !mallRaceDates().includes(mallRaceFilter)) mallRaceFilter = 'all';
   const map = {};
   mallInvoices.forEach(m => {
-    const key = m.supplier || 'بدون اسم';
-    if(!map[key]) map[key] = { supplier: key, count: 0, total: 0 };
-    map[key].count += 1;
-    map[key].total += (m.total || 0);
+    if(mallRaceFilter !== 'all' && m.date !== mallRaceFilter) return;
+    const k = m.supplier || 'بدون اسم';
+    if(!map[k]) map[k] = { supplier: k, count: 0, total: 0 };
+    map[k].count += 1;
+    map[k].total += (m.total || 0);
   });
-  const suppliers = Object.values(map).sort((a,b) => b.total - a.total);
-  const grandTotal = suppliers.reduce((s,x)=>s+x.total,0);
+  return Object.values(map).sort((a,b) => b.total - a.total);
+}
+function setMallRaceFilter(v){ mallRaceFilter = decodeURIComponent(v); render(); }
 
+function renderMallSupplierSummary(){
+  const dates = mallRaceDates();
   let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
   html += `<div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;" class="no-print">
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallSummary()">↩ رجوع لعرض التقارير</button>
   </div>`;
-
-  html += `<div class="cards" style="margin-bottom:22px;">
+  html += `<div class="mr-chips no-print">
+    <button class="mr-chip ${mallRaceFilter==='all'?'on':''}" onclick="setMallRaceFilter('all')">كل الأيام</button>
+    ${dates.map(d => `<button class="mr-chip ${mallRaceFilter===d?'on':''}" onclick="setMallRaceFilter('${d}')">${arabicDayName(d)} ${d.slice(5)}</button>`).join('')}
+  </div>`;
+  html += `<div class="cards" style="margin-bottom:18px;">
     <div class="card" style="cursor:default;">
-      <p class="client" style="margin-bottom:6px;">عدد الموردين</p>
-      <p class="store" style="font-size:22px;">${suppliers.length}</p>
+      <p class="client" style="margin-bottom:6px;">الموردين والفواتير</p>
+      <p class="store" style="font-size:18px;"><span id="mallRaceSuppliersCount">0</span> مورد · <span id="mallRaceInvCount">0</span> فاتورة</p>
     </div>
     <div class="card" style="cursor:default;border-color:var(--mint);">
-      <p class="client" style="margin-bottom:6px;">إجمالي كل الفواتير</p>
-      <p class="store" style="font-size:22px;color:var(--mint);">${formatNumber(grandTotal)}</p>
+      <p class="client" style="margin-bottom:6px;">إجمالي الفواتير</p>
+      <p class="store" style="font-size:22px;color:var(--mint);" id="mallRaceGrand">0</p>
     </div>
   </div>`;
-
-  html += `<div class="section-title">ملخص الموردين <span class="count-pill">${suppliers.length}</span></div>`;
-  if(suppliers.length === 0){
-    html += `<div class="empty">لسه مفيش فواتير مسجّلة.</div>`;
-  } else {
-    html += `<div class="cards">`;
-    suppliers.forEach(s => {
-      html += `<div class="card" style="cursor:pointer;" onclick="jumpToMallSupplier('${encodeURIComponent(s.supplier)}')">
-        <p class="store">${escapeHtml(s.supplier)}</p>
-        <p class="client" style="margin-bottom:10px;">${s.count} فاتورة</p>
-        <div class="meta">
-          <span>إجمالي</span>
-          <span class="amount">${formatNumber(s.total)}</span>
-        </div>
-      </div>`;
-    });
-    html += `</div>`;
-  }
+  html += `<div class="section-title">ترتيب الموردين حسب الإجمالي</div>`;
+  html += `<p class="mr-live" id="mallRaceLive"></p>`;
+  html += `<div class="mall-race" id="mallRace"></div>`;
   return html;
+}
+
+function updateMallRace(){
+  const box = document.getElementById('mallRace');
+  if(!box) return;
+  const arr = mallRaceData();
+  const grand = arr.reduce((s,x) => s + x.total, 0);
+  const cnt = arr.reduce((s,x) => s + x.count, 0);
+  const set = (id, t) => { const e = document.getElementById(id); if(e) e.textContent = t; };
+  set('mallRaceSuppliersCount', arr.length);
+  set('mallRaceInvCount', cnt);
+  set('mallRaceGrand', raceFmt(grand) + ' ج.م');
+  set('mallRaceLive', '🟢 لايف — آخر تحديث ' + new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+  const H = MALL_RACE_H;
+  if(!arr.length){
+    Object.values(mallRaceRows).forEach(r => r.el.remove());
+    mallRaceRows = {};
+    box.style.height = 'auto';
+    box.innerHTML = '<div class="empty">لسه مفيش فواتير مسجّلة.</div>';
+    return;
+  }
+  const emptyEl = box.querySelector('.empty'); if(emptyEl) emptyEl.remove();
+  box.style.height = (arr.length * H) + 'px';
+  const mx = arr[0].total || 1;
+  const keep = {};
+  arr.forEach((o, i) => {
+    keep[o.supplier] = true;
+    let r = mallRaceRows[o.supplier];
+    if(!r){
+      const el = document.createElement('div');
+      el.className = 'mr-row';
+      el.innerHTML = '<span class="mr-rk"></span><span class="mr-nm"></span><span class="mr-am"></span><div class="mr-trk"><div class="mr-fill"></div></div>';
+      el.style.transform = 'translateY(' + (arr.length * H) + 'px)';
+      el.onclick = () => jumpToMallSupplier(encodeURIComponent(o.supplier));
+      r = mallRaceRows[o.supplier] = { el, last: undefined };
+    }
+    const el = r.el;
+    if(el.parentNode !== box){ box.appendChild(el); void el.offsetWidth; }
+    el.querySelector('.mr-rk').textContent = i + 1;
+    const nm = el.querySelector('.mr-nm');
+    nm.textContent = o.supplier;
+    const sm = document.createElement('i'); sm.textContent = o.count + ' فاتورة'; nm.appendChild(sm);
+    el.querySelector('.mr-am').textContent = raceFmt(o.total);
+    el.classList.toggle('mr-first', i === 0);
+    el.style.transform = 'translateY(' + (i * H) + 'px)';
+    el.querySelector('.mr-fill').style.width = Math.max(o.total / mx * 100, 1.5) + '%';
+    if(r.last !== undefined && r.last !== o.total){
+      el.classList.remove('mr-flash'); void el.offsetWidth; el.classList.add('mr-flash');
+    }
+    r.last = o.total;
+  });
+  Object.keys(mallRaceRows).forEach(k => {
+    if(!keep[k]){ mallRaceRows[k].el.remove(); delete mallRaceRows[k]; }
+  });
+}
+
+function mallRaceActive(){ return activeTab === 'mall' && mallSummaryMode; }
+function startMallRacePoll(){
+  if(mallRaceTimer || !mallRaceActive()) return;
+  mallRaceTimer = setInterval(async () => {
+    if(!mallRaceActive()){ clearInterval(mallRaceTimer); mallRaceTimer = null; return; }
+    if(document.hidden || mallSaveBusy > 0 || !isConfigured()) return;
+    try{
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/mall_invoices?select=*`, { headers: sbHeaders() });
+      if(!res.ok) return;
+      const rows = (await res.json()).map(fromRemoteMallShape);
+      if(mallSaveBusy > 0 || !mallRaceActive()) return;
+      const sig = a => a.map(m => [m.id, m.total, m.supplier, m.date].join(':')).sort().join('|');
+      if(sig(rows) !== sig(mallInvoices)) mallInvoices = rows;
+      updateMallRace();
+    }catch(e){ /* نحاول تاني في الدورة الجاية */ }
+  }, 5000);
 }
 
 function renderMallTab(){
@@ -3756,7 +3861,7 @@ function renderMallTab(){
 
     let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
     html += `<div style="display:flex;gap:10px;margin-bottom:12px;" class="no-print">
-      <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallSummary()">📊 ملخص الموردين</button>
+      <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallSummary()">🏁 سباق الموردين (لايف)</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallRanking()">📈 ترتيب التقارير</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="openMallBulkModal()">📦 إضافة عدة فواتير لمورد واحد</button>
     </div>`;
@@ -3800,7 +3905,7 @@ function renderMallTab(){
   let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
 
   html += `<div style="display:flex;gap:10px;margin-bottom:12px;" class="no-print">
-    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallSummary()">📊 ملخص الموردين</button>
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallSummary()">🏁 سباق الموردين (لايف)</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallRanking()">📈 ترتيب التقارير</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="openMallBulkModal()">📦 إضافة عدة فواتير لمورد واحد</button>
   </div>`;
