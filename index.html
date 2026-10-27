@@ -772,6 +772,12 @@ let mallRankingMode = false;
 let mallCategoryMode = false;
 let mallCatMonth = null;
 let mallCatDetail = false;
+let mallCatEditOpen = false;
+let mallRaceMode = false;
+let mallRacePeriod = 'all';
+let mallRaceBy = 'total';
+let mallRacePrev = {};
+let mallRaceTimer = null;
 let mallCategories = {}; // اسم الشركة -> القسم
 let subsReportMonth = null;
 let pendingDeleteMallId = null;
@@ -3735,6 +3741,7 @@ function toggleMallSummary(){
   mallSummaryMode = !mallSummaryMode;
   mallRankingMode = false;
   mallCategoryMode = false;
+  mallRaceMode = false;
   render();
 }
 
@@ -3742,10 +3749,12 @@ function toggleMallRanking(){
   mallRankingMode = !mallRankingMode;
   mallSummaryMode = false;
   mallCategoryMode = false;
+  mallRaceMode = false;
   render();
 }
 
 function jumpToMallSupplier(encodedName){
+  mallRaceMode = false;
   mallCategoryMode = false;
   mallSummaryMode = false;
   mallRankingMode = false;
@@ -3756,6 +3765,7 @@ function jumpToMallSupplier(encodedName){
 function jumpToMallReport(val){
   mallRankingMode = false;
   mallCategoryMode = false;
+  mallRaceMode = false;
   if(val === 'open'){
     mallViewReportNo = 'open';
   } else {
@@ -3857,6 +3867,117 @@ function renderMallSupplierSummary(){
   return html;
 }
 
+/* ====== سباق الموردين ====== */
+const RACE_ROW = 54;
+function toggleMallRace(){
+  mallRaceMode = !mallRaceMode;
+  mallSummaryMode = false; mallRankingMode = false; mallCategoryMode = false;
+  if(mallRaceTimer){ clearInterval(mallRaceTimer); mallRaceTimer = null; }
+  render();
+}
+function mallRaceData(period, by, upTo){
+  const map = {};
+  mallInvoices.forEach(m => {
+    if(period !== 'all' && (m.date||'').slice(0,7) !== period) return;
+    if(upTo && m.date > upTo) return;
+    const k = m.supplier || 'بدون اسم';
+    const e = map[k] || (map[k] = { supplier: k, total: 0, count: 0 });
+    e.total += (m.total || 0); e.count++;
+  });
+  return Object.values(map).map(e => ({ ...e, value: by === 'count' ? e.count : e.total })).sort((a,b) => b.value - a.value);
+}
+function raceValueText(v, by){ return by === 'count' ? v + ' فاتورة' : formatNumber(v) + ' ج.م'; }
+function raceColor(i){ return i === 0 ? 'var(--brass)' : (i === 1 ? '#B8C2D6' : (i === 2 ? '#C98B5A' : 'var(--mint)')); }
+
+function renderMallRace(){
+  if(mallRaceTimer){ clearInterval(mallRaceTimer); mallRaceTimer = null; }
+  const months = getMallMonths();
+  if(mallRacePeriod !== 'all' && !months.includes(mallRacePeriod)) mallRacePeriod = 'all';
+  const data = mallRaceData(mallRacePeriod, mallRaceBy).slice(0, 10);
+
+  let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
+  html += `<div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;" class="no-print">
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallRace()">↩ رجوع لعرض التقارير</button>
+    <button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="startMallRaceReplay()">▶ شغّل السباق</button>
+  </div>`;
+  html += `<div class="month-pills no-print">
+    <button class="month-pill ${mallRaceBy === 'total' ? 'active' : ''}" onclick="mallRaceBy='total';render();">بالقيمة</button>
+    <button class="month-pill ${mallRaceBy === 'count' ? 'active' : ''}" onclick="mallRaceBy='count';render();">بعدد الفواتير</button>
+  </div>`;
+  html += `<div class="month-pills no-print">
+    <button class="month-pill ${mallRacePeriod === 'all' ? 'active' : ''}" onclick="mallRacePeriod='all';render();">كل الوقت</button>
+    ${months.map(mo => `<button class="month-pill ${mallRacePeriod === mo ? 'active' : ''}" onclick="mallRacePeriod='${mo}';render();">${monthLabel(mo)}</button>`).join('')}
+  </div>`;
+
+  if(data.length === 0){
+    return html + `<div class="empty">لسه مفيش فواتير في الفترة دي.</div>`;
+  }
+  const max = data[0].value || 1;
+  html += `<p id="raceDateLabel" style="color:var(--brass);font-weight:700;text-align:center;margin:6px 0 14px;min-height:20px;">🏁 ترتيب أعلى ${data.length} موردين</p>`;
+  html += `<div id="raceBoard" style="position:relative;height:${data.length * RACE_ROW}px;margin-bottom:20px;">` + data.map((e, i) => {
+    const pct = Math.round(e.value / max * 100);
+    const prev = mallRacePrev[e.supplier];
+    const startRank = prev ? prev.rank : data.length;
+    const startPct = prev ? prev.pct : 0;
+    return `<div class="race-row" data-sup="${encSup(e.supplier)}" data-rank="${i}" data-pct="${pct}" style="position:absolute;right:0;left:0;top:0;height:${RACE_ROW - 8}px;display:flex;align-items:center;gap:10px;transform:translateY(${startRank * RACE_ROW}px);transition:transform .9s ease;">
+      <span class="race-rank" style="width:26px;text-align:center;font-weight:700;color:${raceColor(i)};">${i + 1}</span>
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;margin-bottom:4px;">
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(e.supplier)}</span>
+          <span class="race-val" style="color:var(--muted);white-space:nowrap;">${raceValueText(e.value, mallRaceBy)}</span>
+        </div>
+        <div style="height:12px;background:var(--surface-2);border-radius:99px;overflow:hidden;">
+          <div class="race-fill" style="height:100%;width:${startPct}%;background:${raceColor(i)};border-radius:99px;transition:width .9s ease;"></div>
+        </div>
+      </div>
+    </div>`;
+  }).join('') + `</div>`;
+  setTimeout(applyMallRace, 40);
+  return html;
+}
+function applyMallRace(){
+  const rows = document.querySelectorAll('#raceBoard .race-row');
+  const prev = {};
+  rows.forEach(r => {
+    const rank = +r.dataset.rank, pct = +r.dataset.pct;
+    r.style.transform = 'translateY(' + (rank * RACE_ROW) + 'px)';
+    const f = r.querySelector('.race-fill'); if(f) f.style.width = pct + '%';
+    prev[decodeURIComponent(r.dataset.sup)] = { rank, pct };
+  });
+  mallRacePrev = prev;
+}
+function startMallRaceReplay(){
+  if(mallRaceTimer){ clearInterval(mallRaceTimer); mallRaceTimer = null; }
+  const rows = [...document.querySelectorAll('#raceBoard .race-row')];
+  if(!rows.length) return;
+  const dates = [...new Set(mallInvoices.filter(m => mallRacePeriod === 'all' || (m.date||'').slice(0,7) === mallRacePeriod).map(m => m.date).filter(Boolean))].sort();
+  if(!dates.length) return;
+  const label = document.getElementById('raceDateLabel');
+  let i = 0;
+  const tick = () => {
+    if(i >= dates.length){
+      clearInterval(mallRaceTimer); mallRaceTimer = null;
+      if(label) label.textContent = 'خلص السباق 🏁';
+      setTimeout(() => { if(!mallRaceTimer && mallRaceMode) render(); }, 1500);
+      return;
+    }
+    const d = dates[i++];
+    const data = mallRaceData(mallRacePeriod, mallRaceBy, d);
+    const byName = {}; data.forEach(e => { byName[e.supplier] = e; });
+    const max = data.length ? data[0].value : 1;
+    const shown = rows.map(r => { const name = decodeURIComponent(r.dataset.sup); const e = byName[name]; return { r, value: e ? e.value : 0 }; }).sort((a,b) => b.value - a.value);
+    shown.forEach((x, idx) => {
+      x.r.style.transform = 'translateY(' + (idx * RACE_ROW) + 'px)';
+      const f = x.r.querySelector('.race-fill'); if(f) f.style.width = (max ? Math.round(x.value / max * 100) : 0) + '%';
+      const v = x.r.querySelector('.race-val'); if(v) v.textContent = raceValueText(x.value, mallRaceBy);
+      const rk = x.r.querySelector('.race-rank'); if(rk) rk.textContent = idx + 1;
+    });
+    if(label) label.textContent = '📅 ' + d;
+  };
+  tick();
+  mallRaceTimer = setInterval(tick, 900);
+}
+
 /* ====== تقرير المول الشهري بالأقسام ====== */
 async function loadMallCategories(){
   if(!isConfigured()) return;
@@ -3885,10 +4006,19 @@ async function setMallSupplierCategory(enc, value){
     }
   }catch(e){ console.error(e); showToast('حصل خطأ في حفظ القسم', true); }
 }
+function pickMallCategory(enc, sel){
+  let v = sel.value;
+  if(v === '__new__'){
+    v = (window.prompt('اسم القسم الجديد (مثلاً: طبخ)') || '').trim();
+    if(!v){ render(); return; }
+  }
+  setMallSupplierCategory(enc, v);
+}
 function toggleMallCategoryReport(){
   mallCategoryMode = !mallCategoryMode;
   mallSummaryMode = false;
   mallRankingMode = false;
+  mallRaceMode = false;
   render();
 }
 function mallCategoryData(month){
@@ -3937,6 +4067,7 @@ function renderMallCategoryReport(){
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallCategoryReport()">↩ رجوع لعرض التقارير</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="window.print()">🖨 طباعة</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="exportMallCategoryExcel()">📥 Excel</button>
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="mallCatEditOpen=!mallCatEditOpen;render();">🏷 تحديد أقسام الشركات</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="mallCatDetail=!mallCatDetail;render();">${mallCatDetail ? 'إخفاء الفواتير' : 'عرض الفواتير بالتفصيل'}</button>
   </div>`;
 
@@ -3952,12 +4083,28 @@ function renderMallCategoryReport(){
   const namedCats = d.cats.filter(c => c.name !== '');
   const none = d.cats.find(c => c.name === '');
 
-  html += `<datalist id="mallCategoriesList">${allCatNames.map(n => `<option value="${escapeHtml(n)}">`).join('')}</datalist>`;
 
   if(none){
     html += `<div class="calc-card no-print" style="border-color:var(--amber);margin-bottom:16px;padding:12px 16px;">
-      <p style="margin:0;color:var(--amber);font-size:13.5px;">⚠ فيه ${none.suppliers.length} شركة من غير قسم (${formatNumber(none.total)} ج.م). اكتب القسم قدام كل شركة في الآخر وهيتحفظ.
-      <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px;margin-right:8px;" onclick="document.getElementById('mallCatNone').scrollIntoView({behavior:'smooth'})">روح لهم</button></p>
+      <p style="margin:0;color:var(--amber);font-size:13.5px;">⚠ فيه ${none.suppliers.length} شركة من غير قسم (${formatNumber(none.total)} ج.م). دوس على (حدّد الأقسام) واختار قسم لكل شركة.
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px;margin-right:8px;" onclick="mallCatEditOpen=true;render();">حدّد الأقسام</button></p>
+    </div>`;
+  }
+
+  if(mallCatEditOpen){
+    const sups = [...new Set(mallInvoices.map(m => m.supplier || 'بدون اسم'))];
+    sups.sort((a,b) => (!!mallCategories[a] - !!mallCategories[b]) || a.localeCompare(b, 'ar'));
+    html += `<div class="calc-card no-print" style="margin-bottom:18px;">
+      <p style="margin:0 0 4px;font-weight:700;">🏷 تحديد أقسام الشركات</p>
+      <p style="margin:0 0 12px;color:var(--muted);font-size:12.5px;line-height:1.7;">اختار قسم لكل شركة من القايمة، أو اختار "➕ قسم جديد" واكتب اسمه (زي: طبخ، منظفات). بيتحفظ لوحده، والشركات اللي من غير قسم فوق.</p>
+      ${sups.map(sp => { const cur = mallCategories[sp] || ''; return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+        <span style="flex:1;font-size:13.5px;">${escapeHtml(sp)}</span>
+        <select style="flex:1;" onchange="pickMallCategory('${encSup(sp)}', this)">
+          <option value="">— من غير قسم —</option>
+          ${allCatNames.map(n => `<option value="${escapeHtml(n)}" ${n === cur ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('')}
+          <option value="__new__">➕ قسم جديد...</option>
+        </select></div>`; }).join('')}
+      <button class="btn btn-ghost" style="width:100%;margin-top:6px;" onclick="mallCatEditOpen=false;render();">تم</button>
     </div>`;
   }
 
@@ -3983,18 +4130,17 @@ function renderMallCategoryReport(){
 
   d.cats.forEach(c => {
     html += `<div class="section-title" style="margin-top:26px;" ${c.name === '' ? 'id="mallCatNone"' : ''}>${c.name ? escapeHtml(c.name) : 'بدون قسم'} <span class="count-pill">${c.suppliers.length} شركة &middot; ${formatNumber(c.total)}</span></div>
-      <table><thead><tr><th>الشركة</th><th>الفواتير</th><th>الإجمالي</th><th>مرتجع</th><th>بونص</th><th class="no-print">القسم</th></tr></thead><tbody>`;
+      <table><thead><tr><th>الشركة</th><th>الفواتير</th><th>الإجمالي</th><th>مرتجع</th><th>بونص</th></tr></thead><tbody>`;
     c.suppliers.forEach(sp => {
       html += `<tr>
         <td>${escapeHtml(sp.supplier)}</td><td>${sp.count}</td><td>${formatNumber(sp.total)}</td>
         <td>${sp.returns ? '<span style="color:var(--red);font-weight:600;">' + sp.returns + '</span>' : '—'}</td>
         <td>${sp.bonus ? sp.bonus : '—'}</td>
-        <td class="no-print"><input list="mallCategoriesList" value="${escapeHtml(c.name)}" placeholder="اكتب القسم" style="min-width:110px;padding:6px 8px;font-size:12.5px;" onchange="setMallSupplierCategory('${encSup(sp.supplier)}', this.value)"></td>
       </tr>`;
       if(mallCatDetail){
         const lines = [...sp.invoices].sort((a,b) => (a.date||'').localeCompare(b.date||'')).map(m =>
           `${m.invoiceNumber ? 'فاتورة ' + escapeHtml(m.invoiceNumber) : 'فاتورة'} &middot; ${m.date} &middot; ${m.isBonus ? 'بونص' : formatNumber(m.total)}${m.hasReturn ? ' &middot; <span style="color:var(--red);">مرتجع</span>' : ''}`);
-        html += `<tr><td colspan="6" style="color:var(--muted);font-size:12px;line-height:1.9;">${lines.join('<br>')}</td></tr>`;
+        html += `<tr><td colspan="5" style="color:var(--muted);font-size:12px;line-height:1.9;">${lines.join('<br>')}</td></tr>`;
       }
     });
     html += `</tbody></table>`;
@@ -4004,6 +4150,9 @@ function renderMallCategoryReport(){
 }
 
 function renderMallTab(){
+  if(mallRaceMode){
+    return renderMallRace();
+  }
   if(mallCategoryMode){
     return renderMallCategoryReport();
   }
@@ -4024,6 +4173,7 @@ function renderMallTab(){
     let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
     html += `<div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;" class="no-print">
       <button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="toggleMallCategoryReport()">📑 التقرير الشهري بالأقسام</button>
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallRace()">🏁 سباق الموردين</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallSummary()">📊 ملخص الموردين</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallRanking()">📈 ترتيب التقارير</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="openMallBulkModal()">📦 إضافة عدة فواتير لمورد واحد</button>
@@ -4069,6 +4219,7 @@ function renderMallTab(){
 
   html += `<div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;" class="no-print">
     <button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="toggleMallCategoryReport()">📑 التقرير الشهري بالأقسام</button>
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallRace()">🏁 سباق الموردين</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallSummary()">📊 ملخص الموردين</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallRanking()">📈 ترتيب التقارير</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="openMallBulkModal()">📦 إضافة عدة فواتير لمورد واحد</button>
