@@ -769,6 +769,10 @@ let pendingReopenReportNo = null;
 let mallSearchQuery = '';
 let mallSummaryMode = false;
 let mallRankingMode = false;
+let mallCategoryMode = false;
+let mallCatMonth = null;
+let mallCatDetail = false;
+let mallCategories = {}; // اسم الشركة -> القسم
 let subsReportMonth = null;
 let pendingDeleteMallId = null;
 let editingPaymentId = null;
@@ -1210,6 +1214,7 @@ async function loadData(){
   await loadCreditCards();
   await loadMyDebts();
   await loadBankCardsData();
+  await loadMallCategories();
   await loadInvoices();
   await loadMallInvoices();
   fetchLiveRate();
@@ -3729,16 +3734,19 @@ function renderMallInvoiceRow(m, showReportCol){
 function toggleMallSummary(){
   mallSummaryMode = !mallSummaryMode;
   mallRankingMode = false;
+  mallCategoryMode = false;
   render();
 }
 
 function toggleMallRanking(){
   mallRankingMode = !mallRankingMode;
   mallSummaryMode = false;
+  mallCategoryMode = false;
   render();
 }
 
 function jumpToMallSupplier(encodedName){
+  mallCategoryMode = false;
   mallSummaryMode = false;
   mallRankingMode = false;
   mallSearchQuery = decodeURIComponent(encodedName);
@@ -3747,6 +3755,7 @@ function jumpToMallSupplier(encodedName){
 
 function jumpToMallReport(val){
   mallRankingMode = false;
+  mallCategoryMode = false;
   if(val === 'open'){
     mallViewReportNo = 'open';
   } else {
@@ -3848,7 +3857,156 @@ function renderMallSupplierSummary(){
   return html;
 }
 
+/* ====== تقرير المول الشهري بالأقسام ====== */
+async function loadMallCategories(){
+  if(!isConfigured()) return;
+  try{
+    const rows = await sbGetAll('mall_supplier_categories');
+    mallCategories = {};
+    rows.forEach(r => { if(r.supplier && r.category) mallCategories[r.supplier] = r.category; });
+  }catch(e){
+    console.error('load mall categories error', e);
+    mallCategories = {};
+    showToast('جدول أقسام الشركات مش موجود، شغّل ملف الـ SQL الجديد', true);
+  }
+}
+function encSup(name){ return encodeURIComponent(name).replace(/'/g, '%27'); }
+async function setMallSupplierCategory(enc, value){
+  const supplier = decodeURIComponent(enc);
+  const cat = (value || '').trim();
+  if(cat) mallCategories[supplier] = cat; else delete mallCategories[supplier];
+  render();
+  try{
+    if(cat){
+      await sbUpsertRow('mall_supplier_categories', { supplier, category: cat });
+    } else {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/mall_supplier_categories?supplier=eq.${encodeURIComponent(supplier)}`, { method: 'DELETE', headers: sbHeaders() });
+      if(!res.ok) throw new Error('delete failed');
+    }
+  }catch(e){ console.error(e); showToast('حصل خطأ في حفظ القسم', true); }
+}
+function toggleMallCategoryReport(){
+  mallCategoryMode = !mallCategoryMode;
+  mallSummaryMode = false;
+  mallRankingMode = false;
+  render();
+}
+function mallCategoryData(month){
+  const inv = mallInvoices.filter(m => (m.date||'').slice(0,7) === month);
+  const cats = {};
+  inv.forEach(m => {
+    const supplier = m.supplier || 'بدون اسم';
+    const catName = mallCategories[supplier] || '';
+    const c = cats[catName] || (cats[catName] = { name: catName, suppliers: {}, count: 0, total: 0 });
+    const sp = c.suppliers[supplier] || (c.suppliers[supplier] = { supplier, count: 0, total: 0, returns: 0, bonus: 0, invoices: [] });
+    sp.count++; sp.total += (m.total || 0);
+    if(m.hasReturn) sp.returns++;
+    if(m.isBonus) sp.bonus++;
+    sp.invoices.push(m);
+    c.count++; c.total += (m.total || 0);
+  });
+  const list = Object.values(cats).map(c => ({ ...c, suppliers: Object.values(c.suppliers).sort((a,b) => b.total - a.total) }));
+  list.sort((a,b) => (a.name === '') - (b.name === '') || b.total - a.total);
+  return { cats: list, total: inv.reduce((s,m)=>s+(m.total||0),0), count: inv.length };
+}
+function exportMallCategoryExcel(){
+  if(typeof XLSX === 'undefined'){ showToast('مكتبة الإكسيل لسه بتحمّل، جرب بعد ثواني', true); return; }
+  if(!mallCatMonth) return;
+  const d = mallCategoryData(mallCatMonth);
+  const detail = [['القسم','الشركة','رقم الفاتورة','التاريخ','الإجمالي','مرتجع','بونص']];
+  const summary = [['القسم','عدد الشركات','عدد الفواتير','الإجمالي','النسبة من الشهر']];
+  d.cats.forEach(c => {
+    summary.push([c.name || 'بدون قسم', c.suppliers.length, c.count, c.total, d.total ? Math.round(c.total / d.total * 1000) / 10 + '%' : '0%']);
+    c.suppliers.forEach(sp => {
+      [...sp.invoices].sort((a,b) => (a.date||'').localeCompare(b.date||'')).forEach(m => {
+        detail.push([c.name || 'بدون قسم', sp.supplier, m.invoiceNumber || '', m.date, m.total || 0, m.hasReturn ? 'يوجد' : '', m.isBonus ? 'بونص' : '']);
+      });
+    });
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'ملخص الأقسام');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detail), 'الفواتير بالتفصيل');
+  XLSX.writeFile(wb, 'تقرير-المول-' + mallCatMonth + '.xlsx');
+}
+function renderMallCategoryReport(){
+  const months = getMallMonths();
+  if(!mallCatMonth || !months.includes(mallCatMonth)) mallCatMonth = months[0] || null;
+
+  let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
+  html += `<div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;" class="no-print">
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallCategoryReport()">↩ رجوع لعرض التقارير</button>
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="window.print()">🖨 طباعة</button>
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="exportMallCategoryExcel()">📥 Excel</button>
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="mallCatDetail=!mallCatDetail;render();">${mallCatDetail ? 'إخفاء الفواتير' : 'عرض الفواتير بالتفصيل'}</button>
+  </div>`;
+
+  if(!mallCatMonth){
+    return html + `<div class="empty">لسه مفيش فواتير مسجّلة.</div>`;
+  }
+
+  html += `<div class="month-pills no-print">${months.map(mo => `<button class="month-pill ${mallCatMonth === mo ? 'active' : ''}" onclick="mallCatMonth='${mo}';render();">${monthLabel(mo)}</button>`).join('')}</div>`;
+
+  const d = mallCategoryData(mallCatMonth);
+  const allCatNames = [...new Set(Object.values(mallCategories))].sort();
+  const supplierCount = d.cats.reduce((s,c)=>s+c.suppliers.length,0);
+  const namedCats = d.cats.filter(c => c.name !== '');
+  const none = d.cats.find(c => c.name === '');
+
+  html += `<datalist id="mallCategoriesList">${allCatNames.map(n => `<option value="${escapeHtml(n)}">`).join('')}</datalist>`;
+
+  if(none){
+    html += `<div class="calc-card no-print" style="border-color:var(--amber);margin-bottom:16px;padding:12px 16px;">
+      <p style="margin:0;color:var(--amber);font-size:13.5px;">⚠ فيه ${none.suppliers.length} شركة من غير قسم (${formatNumber(none.total)} ج.م). اكتب القسم قدام كل شركة في الآخر وهيتحفظ.
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px;margin-right:8px;" onclick="document.getElementById('mallCatNone').scrollIntoView({behavior:'smooth'})">روح لهم</button></p>
+    </div>`;
+  }
+
+  html += `<div class="cards" style="margin-bottom:22px;">
+    <div class="card" style="cursor:default;border-color:var(--mint);">
+      <p class="client" style="margin-bottom:6px;">إجمالي ${monthLabel(mallCatMonth)}</p>
+      <p class="store" style="font-size:22px;color:var(--mint);">${formatNumber(d.total)}</p>
+    </div>
+    <div class="card" style="cursor:default;">
+      <p class="client" style="margin-bottom:6px;">${d.count} فاتورة</p>
+      <p class="store" style="font-size:16px;">${supplierCount} شركة &middot; ${namedCats.length} قسم</p>
+    </div>
+  </div>`;
+
+  html += `<div id="mallCatPrintArea" class="print-area">
+    <h2 style="font-family:'Cairo',sans-serif;font-size:18px;margin:0 0 14px;display:none;" class="print-only">تقرير المول الشهري بالأقسام — ${monthLabel(mallCatMonth)}</h2>`;
+
+  html += `<div class="section-title">ملخص الأقسام</div>
+    <table><thead><tr><th>القسم</th><th>الشركات</th><th>الفواتير</th><th>الإجمالي</th><th>النسبة</th></tr></thead><tbody>
+    ${d.cats.map(c => `<tr><td>${c.name ? escapeHtml(c.name) : '<span style="color:var(--amber);">بدون قسم</span>'}</td><td>${c.suppliers.length}</td><td>${c.count}</td><td>${formatNumber(c.total)}</td><td>${d.total ? (Math.round(c.total / d.total * 1000) / 10) : 0}%</td></tr>`).join('')}
+    <tr style="font-weight:700;"><td>الإجمالي</td><td>${supplierCount}</td><td>${d.count}</td><td>${formatNumber(d.total)}</td><td>100%</td></tr>
+    </tbody></table>`;
+
+  d.cats.forEach(c => {
+    html += `<div class="section-title" style="margin-top:26px;" ${c.name === '' ? 'id="mallCatNone"' : ''}>${c.name ? escapeHtml(c.name) : 'بدون قسم'} <span class="count-pill">${c.suppliers.length} شركة &middot; ${formatNumber(c.total)}</span></div>
+      <table><thead><tr><th>الشركة</th><th>الفواتير</th><th>الإجمالي</th><th>مرتجع</th><th>بونص</th><th class="no-print">القسم</th></tr></thead><tbody>`;
+    c.suppliers.forEach(sp => {
+      html += `<tr>
+        <td>${escapeHtml(sp.supplier)}</td><td>${sp.count}</td><td>${formatNumber(sp.total)}</td>
+        <td>${sp.returns ? '<span style="color:var(--red);font-weight:600;">' + sp.returns + '</span>' : '—'}</td>
+        <td>${sp.bonus ? sp.bonus : '—'}</td>
+        <td class="no-print"><input list="mallCategoriesList" value="${escapeHtml(c.name)}" placeholder="اكتب القسم" style="min-width:110px;padding:6px 8px;font-size:12.5px;" onchange="setMallSupplierCategory('${encSup(sp.supplier)}', this.value)"></td>
+      </tr>`;
+      if(mallCatDetail){
+        const lines = [...sp.invoices].sort((a,b) => (a.date||'').localeCompare(b.date||'')).map(m =>
+          `${m.invoiceNumber ? 'فاتورة ' + escapeHtml(m.invoiceNumber) : 'فاتورة'} &middot; ${m.date} &middot; ${m.isBonus ? 'بونص' : formatNumber(m.total)}${m.hasReturn ? ' &middot; <span style="color:var(--red);">مرتجع</span>' : ''}`);
+        html += `<tr><td colspan="6" style="color:var(--muted);font-size:12px;line-height:1.9;">${lines.join('<br>')}</td></tr>`;
+      }
+    });
+    html += `</tbody></table>`;
+  });
+  html += `</div>`;
+  return html;
+}
+
 function renderMallTab(){
+  if(mallCategoryMode){
+    return renderMallCategoryReport();
+  }
   if(mallSummaryMode){
     return renderMallSupplierSummary();
   }
@@ -3864,8 +4022,9 @@ function renderMallTab(){
     const matchTotal = matches.reduce((s,m)=>s+(m.total||0),0);
 
     let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
-    html += `<div style="display:flex;gap:10px;margin-bottom:12px;" class="no-print">
-      <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallSummary()">📊 ملخص الموردين</button>
+    html += `<div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;" class="no-print">
+      <button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="toggleMallCategoryReport()">📑 التقرير الشهري بالأقسام</button>
+    <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallSummary()">📊 ملخص الموردين</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallRanking()">📈 ترتيب التقارير</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="openMallBulkModal()">📦 إضافة عدة فواتير لمورد واحد</button>
     </div>`;
@@ -3908,7 +4067,8 @@ function renderMallTab(){
 
   let html = `<p class="sub">تقرير تسليم فواتير الموردين — مستقل تمامًا عن باقي التطبيق</p>`;
 
-  html += `<div style="display:flex;gap:10px;margin-bottom:12px;" class="no-print">
+  html += `<div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;" class="no-print">
+    <button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="toggleMallCategoryReport()">📑 التقرير الشهري بالأقسام</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallSummary()">📊 ملخص الموردين</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="toggleMallRanking()">📈 ترتيب التقارير</button>
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="openMallBulkModal()">📦 إضافة عدة فواتير لمورد واحد</button>
