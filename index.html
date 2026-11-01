@@ -688,7 +688,7 @@
 
 <div class="modal-bg" id="bankCardModalBg">
   <div class="modal">
-    <h2>إضافة كارت دفع</h2>
+    <h2 id="bcTitle">إضافة كارت دفع</h2>
     <label>البنك</label>
     <input id="bc_bank" placeholder="مثلاً: CIB">
     <label>اسم مميز للكارت (اختياري)</label>
@@ -5382,6 +5382,7 @@ function renderBankCardsTab(){
           <button class="pay-btn" style="margin-top:0;flex:1;" onclick="openHolderModal('${c.id}')">بعتّ بياناته لحد</button>
           <button class="btn btn-ghost" style="flex:none;padding:8px 12px;" onclick="openLinkModal('${c.id}')">+ ربط حساب</button>
           <button class="btn btn-ghost" style="flex:none;padding:8px 12px;" onclick="openTxnModal('${c.id}')">+ معاملة</button>
+          <button class="btn btn-ghost" style="flex:none;padding:8px 12px;" onclick="openBankCardModal('${c.id}')">✏️ تعديل</button>
           ${pendingDeleteBankCardId === c.id
             ? `<button class="btn btn-danger" style="flex:none;padding:0 12px;font-size:12px;" onclick="deleteBankCard('${c.id}')">تأكيد الحذف</button>`
             : `<button class="icon-btn" style="align-self:center;" onclick="pendingDeleteBankCardId='${c.id}';render();" title="حذف">✕</button>`}
@@ -5466,12 +5467,21 @@ function renderBankCardsTab(){
   return html;
 }
 
-function openBankCardModal(){
-  ['bc_bank','bc_label','bc_last4','bc_pct','bc_cashback','bc_notes'].forEach(id => document.getElementById(id).value = '');
+let editingBankCardId = null;
+function openBankCardModal(id){
+  const c = id ? bankCardById(id) : null;
+  editingBankCardId = c ? c.id : null;
+  document.getElementById('bcTitle').textContent = c ? 'تعديل كارت دفع' : 'إضافة كارت دفع';
+  document.getElementById('bc_bank').value = c ? c.bank : '';
+  document.getElementById('bc_label').value = c ? c.label : '';
+  document.getElementById('bc_last4').value = c ? c.last4 : '';
+  document.getElementById('bc_pct').value = c ? c.commissionPct : '';
+  document.getElementById('bc_cashback').value = c ? c.cashbackPct : '';
+  document.getElementById('bc_notes').value = c ? c.notes : '';
   document.getElementById('bcFormError').style.display = 'none';
   document.getElementById('bankCardModalBg').classList.add('open');
 }
-function closeBankCardModal(){ bankCardFromPayment = false; document.getElementById('bankCardModalBg').classList.remove('open'); }
+function closeBankCardModal(){ bankCardFromPayment = false; editingBankCardId = null; document.getElementById('bankCardModalBg').classList.remove('open'); }
 async function handleBankCardSave(){
   const bank = document.getElementById('bc_bank').value.trim();
   const label = document.getElementById('bc_label').value.trim();
@@ -5479,6 +5489,7 @@ async function handleBankCardSave(){
   const pct = parseFloat(document.getElementById('bc_pct').value);
   const cashbackPct = parseFloat(document.getElementById('bc_cashback').value) || 0;
   const fromPayment = bankCardFromPayment;
+  const editId = editingBankCardId;
   const notes = document.getElementById('bc_notes').value.trim();
   const err = document.getElementById('bcFormError');
   if(!bank || last4.length !== 4 || isNaN(pct)){
@@ -5486,11 +5497,28 @@ async function handleBankCardSave(){
     err.style.display = 'block';
     return;
   }
-  const c = { id: newId(), bank, label, last4, commissionPct: pct, cashbackPct, notes };
-  bankCards.push(c);
+  const existing = editId ? bankCardById(editId) : null;
+  const ratesChanged = !!existing && (existing.commissionPct !== pct || existing.cashbackPct !== cashbackPct);
+  const c = existing ? Object.assign(existing, { bank, label, last4, commissionPct: pct, cashbackPct, notes }) : { id: newId(), bank, label, last4, commissionPct: pct, cashbackPct, notes };
+  if(!existing) bankCards.push(c);
+  // لو النسب اتغيّرت، بنعيد حساب العمولة والكاش باك لكل مدفوعات الكارت القديمة بالنسب الجديدة
+  let recalculated = 0, skipped = 0;
+  if(ratesChanged){
+    payments.forEach(pay => {
+      if(pay.cardId !== c.id) return;
+      const base = pay.costEgp || (pay.costCurrency === 'EGP' ? pay.costAmount : 0);
+      if(!base){ if(pay.costAmount) skipped++; return; }
+      pay.costEgp = base;
+      pay.commission = round2(base * c.commissionPct / 100);
+      pay.cashback = round2(base * c.cashbackPct / 100);
+      recalculated++;
+    });
+  }
   closeBankCardModal(); render();
   if(fromPayment){ populatePaymentCardSelect(c.id); updatePaymentCardInfo(); }
-  try{ await sbUpsertRow('bank_cards', { id: c.id, bank, label: label || null, last4, commission_pct: pct, cashback_pct: cashbackPct, notes: notes || null }); showToast('اتضاف الكارت'); }
+  try{ await sbUpsertRow('bank_cards', { id: c.id, bank, label: label || null, last4, commission_pct: pct, cashback_pct: cashbackPct, notes: notes || null }); 
+    if(recalculated) await savePayments();
+    showToast(existing ? (ratesChanged ? `اتعدّل الكارت وأعيد حساب ${recalculated} مدفوعة` + (skipped ? ` (${skipped} مدفوعة بعملة أجنبية قديمة اتسابت زي ما هي)` : '') : 'اتعدّل الكارت') : 'اتضاف الكارت'); }
   catch(e){ console.error(e); showToast('حصل خطأ في الحفظ', true); }
 }
 async function deleteBankCard(id){
