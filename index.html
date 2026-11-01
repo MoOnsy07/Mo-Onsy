@@ -563,6 +563,25 @@
   </div>
 </div>
 
+<div class="modal-bg" id="mallCodingModalBg">
+  <div class="modal" style="max-width:560px;max-height:88vh;overflow-y:auto;">
+    <h2>إضافة أصناف متكودة جديدة</h2>
+    <label>اسم الشركة</label>
+    <input id="mc_company" list="mallCodingCompaniesList" placeholder="مثال: شركة النور للتوريدات">
+    <datalist id="mallCodingCompaniesList"></datalist>
+    <label>تاريخ التكويد</label>
+    <input id="mc_date" type="date">
+    <p style="color:var(--muted);font-size:12px;margin:12px 0 6px;">ضيف كل صنف في سطر: الاسم والباركود وقيمة التكويد.</p>
+    <div id="mc_rows"></div>
+    <button type="button" class="btn btn-ghost" style="width:100%;margin-top:8px;" onclick="addMallCodingRow()">+ صنف جديد</button>
+    <p id="mcFormError" style="color:var(--red);font-size:12.5px;margin:12px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeMallCodingModal()">إلغاء</button>
+      <button class="btn btn-primary" onclick="saveMallCoding()">حفظ</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="mallBulkModalBg">
   <div class="modal" style="max-width:520px;max-height:85vh;overflow-y:auto;">
     <h2>إضافة عدة فواتير لمورد واحد</h2>
@@ -780,6 +799,10 @@ let pendingDeleteInvoiceId = null;
 let payConfirmSubId = null;
 let invoicesSearchQuery = '';
 let mallInvoices = [];
+let mallCodingItems = [];     // أصناف متكودة جديدة: { id, company, name, barcode, fee, date }
+let mallCodingCompany = '';   // الشركة المعروضة في الكشف
+let mallCodingDate = '';      // '' = كل التواريخ
+let mcRowCounter = 0;
 let mallViewMonth = null;   // 'YYYY-MM' أو null (لسه مختارش)
 let mallViewDate = null;    // 'YYYY-MM-DD' أو null
 let mallViewReportNo = 'open'; // 'open' = التقرير الحالي اللي لسه ما اتقفلش، أو رقم تقرير مقفول
@@ -1251,6 +1274,7 @@ async function loadData(){
   await loadMallCategories();
   await loadInvoices();
   await loadMallInvoices();
+  await loadMallCodingItems();
   fetchLiveRate();
   render();
 }
@@ -1544,6 +1568,130 @@ async function deleteRemoteInvoiceRow(id){
     console.error('delete invoice error', e);
     showToast('حصل خطأ في الحذف', true);
   }
+}
+
+/* ====== كشف الأصناف المتكودة (المول) ====== */
+async function loadMallCodingItems(){
+  if(!isConfigured()) return;
+  try{
+    const rows = await sbGetAll('mall_coding_items');
+    mallCodingItems = rows.map(r => ({ id: r.id, company: r.company || '', name: r.item_name || '', barcode: r.barcode || '', fee: Number(r.coding_fee || 0), date: r.coded_date || '' }));
+  }catch(e){
+    console.error('load mall coding error', e);
+    showToast('حصل خطأ في تحميل أصناف التكويد (اتأكدت من تشغيل ملف الـ SQL الجديد؟)', true);
+    mallCodingItems = [];
+  }
+}
+const fmtDMY = iso => { const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${Number(m[3])}/${Number(m[2])}/${m[1]}` : ''; };
+
+function mallCodingRowHtml(n){
+  return `<div id="mcRow${n}" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border);">
+    <div style="flex:2;min-width:140px;"><label style="margin-top:0;font-size:11px;">اسم الصنف</label><input id="mc_name${n}" placeholder="مثال: عصير برتقال 1 لتر"></div>
+    <div style="flex:1.4;min-width:120px;"><label style="margin-top:0;font-size:11px;">الباركود</label><input id="mc_barcode${n}" inputmode="numeric" placeholder="6221234567890"></div>
+    <div style="flex:1;min-width:90px;"><label style="margin-top:0;font-size:11px;">قيمة التكويد</label><input id="mc_fee${n}" type="number" step="0.01" placeholder="0"></div>
+    <button type="button" class="icon-btn" style="flex:none;" onclick="removeMallCodingRow(${n})" title="حذف السطر">✕</button>
+  </div>`;
+}
+function addMallCodingRow(){
+  mcRowCounter++;
+  document.getElementById('mc_rows').insertAdjacentHTML('beforeend', mallCodingRowHtml(mcRowCounter));
+}
+function removeMallCodingRow(n){ const el = document.getElementById('mcRow' + n); if(el) el.remove(); }
+function openMallCodingModal(){
+  document.getElementById('mc_company').value = mallCodingCompany || '';
+  document.getElementById('mc_date').value = new Date().toISOString().slice(0,10);
+  document.getElementById('mc_rows').innerHTML = '';
+  document.getElementById('mcFormError').style.display = 'none';
+  mcRowCounter = 0;
+  const companies = [...new Set([...mallCodingItems.map(i => i.company), ...mallInvoices.map(m => m.supplier)].filter(Boolean))];
+  document.getElementById('mallCodingCompaniesList').innerHTML = companies.map(c => `<option value="${escapeHtml(c)}">`).join('');
+  addMallCodingRow(); addMallCodingRow(); addMallCodingRow();
+  document.getElementById('mallCodingModalBg').classList.add('open');
+}
+function closeMallCodingModal(){ document.getElementById('mallCodingModalBg').classList.remove('open'); }
+
+async function saveMallCoding(){
+  const err = document.getElementById('mcFormError');
+  const showErr = msg => { err.textContent = msg; err.style.display = 'block'; };
+  const company = document.getElementById('mc_company').value.trim();
+  const date = document.getElementById('mc_date').value || new Date().toISOString().slice(0,10);
+  if(!company){ showErr('اكتب اسم الشركة'); return; }
+  const items = [];
+  const seen = new Set();
+  for(const row of document.querySelectorAll('#mc_rows > div')){
+    const n = row.id.replace('mcRow', '');
+    const name = document.getElementById('mc_name' + n).value.trim();
+    const barcode = document.getElementById('mc_barcode' + n).value.trim();
+    const fee = parseFloat(document.getElementById('mc_fee' + n).value);
+    if(!name && !barcode && isNaN(fee)) continue; // سطر فاضي
+    if(!name || !barcode){ showErr('كل صنف لازم يكون له اسم وباركود'); return; }
+    if(isNaN(fee) || fee < 0){ showErr(`اكتب قيمة التكويد للصنف: ${name}`); return; }
+    if(seen.has(barcode) || mallCodingItems.some(i => i.barcode === barcode)){ showErr(`الباركود ${barcode} متسجل قبل كده`); return; }
+    seen.add(barcode);
+    items.push({ id: newId(), company, name, barcode, fee, date });
+  }
+  if(items.length === 0){ showErr('ضيف صنف واحد على الأقل'); return; }
+  mallCodingItems.push(...items);
+  mallCodingCompany = company;
+  mallCodingDate = '';
+  closeMallCodingModal();
+  render();
+  try{
+    for(const it of items){
+      await sbUpsertRow('mall_coding_items', { id: it.id, company: it.company, item_name: it.name, barcode: it.barcode, coding_fee: it.fee, coded_date: it.date });
+    }
+    showToast(`اتضاف ${items.length} صنف للكشف ✓`);
+  }catch(e){
+    console.error(e);
+    showToast('الأصناف اتضافت في الصفحة بس، حصل خطأ في الحفظ (اتأكدت من تشغيل ملف الـ SQL؟)', true);
+  }
+}
+async function deleteMallCodingItem(id){
+  if(!confirm('تحذف الصنف ده من الكشف؟')) return;
+  mallCodingItems = mallCodingItems.filter(i => i.id !== id);
+  render();
+  try{ await sbDeleteRow('mall_coding_items', id); }catch(e){ console.error(e); showToast('حصل خطأ في الحذف من الداتا بيز', true); }
+}
+function setMallCodingCompany(v){ mallCodingCompany = v; mallCodingDate = ''; render(); }
+function setMallCodingDate(v){ mallCodingDate = v; render(); }
+
+function renderMallCodingTab(){
+  const companies = [...new Set(mallCodingItems.map(i => i.company))].sort((a, b) => a.localeCompare(b, 'ar'));
+  if(companies.length === 0){
+    return `<div class="empty"><p>لسه مفيش أصناف متكودة. دوس "+ إضافة أصناف" وسجّل أول كشف.</p></div>`;
+  }
+  if(!companies.includes(mallCodingCompany)) mallCodingCompany = companies[0];
+  const ofCompany = mallCodingItems.filter(i => i.company === mallCodingCompany);
+  const dates = [...new Set(ofCompany.map(i => i.date).filter(Boolean))].sort().reverse();
+  if(mallCodingDate && !dates.includes(mallCodingDate)) mallCodingDate = '';
+  const list = ofCompany.filter(i => !mallCodingDate || i.date === mallCodingDate);
+  const total = list.reduce((a, i) => a + i.fee, 0);
+  const dateText = mallCodingDate ? fmtDMY(mallCodingDate) : (dates.length > 1 ? `من ${fmtDMY(dates[dates.length - 1])} إلى ${fmtDMY(dates[0])}` : fmtDMY(dates[0] || new Date().toISOString().slice(0,10)));
+  const sigLine = title => `<div style="flex:1;min-width:200px;text-align:center;">
+      <p style="font-weight:700;margin:0 0 46px;">${title}</p>
+      <p style="margin:0 0 10px;">الاسم: ............................................</p>
+      <p style="margin:0;">التوقيع: ..........................................</p>
+    </div>`;
+  return `<div class="no-print" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
+      <div style="flex:1;min-width:200px;"><label style="margin-top:0;">الشركة</label>
+        <select onchange="setMallCodingCompany(this.value)">${companies.map(c => `<option value="${escapeHtml(c)}" ${c === mallCodingCompany ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select></div>
+      <div style="flex:1;min-width:160px;"><label style="margin-top:0;">تاريخ التكويد</label>
+        <select onchange="setMallCodingDate(this.value)"><option value="">كل التواريخ</option>${dates.map(d => `<option value="${d}" ${d === mallCodingDate ? 'selected' : ''}>${fmtDMY(d)}</option>`).join('')}</select></div>
+      <button class="btn btn-primary" style="flex:none;" onclick="window.print()">🖨️ طباعة الكشف</button>
+    </div>
+    <div class="print-area" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px 20px;">
+      <h2 style="text-align:center;margin:0 0 4px;font-size:22px;">${escapeHtml(mallCodingCompany)}</h2>
+      <p style="text-align:center;margin:0 0 4px;font-size:16px;font-weight:700;">كشف بالأصناف المتكودة جديد</p>
+      <p style="text-align:center;margin:0 0 18px;font-size:13px;color:var(--muted);">التاريخ: ${dateText}</p>
+      <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;text-align:center;">
+        <thead><tr><th style="width:44px;">م</th><th>اسم الصنف</th><th>الباركود</th><th>قيمة التكويد</th><th class="no-print" style="width:44px;"></th></tr></thead>
+        <tbody>${list.map((i, idx) => `<tr><td>${idx + 1}</td><td>${escapeHtml(i.name)}</td><td dir="ltr">${escapeHtml(i.barcode)}</td><td>${i.fee.toFixed(2)} ج.م</td><td class="no-print"><button class="icon-btn" onclick="deleteMallCodingItem('${i.id}')" title="حذف">🗑</button></td></tr>`).join('')}</tbody>
+        <tfoot><tr><td colspan="3" style="font-weight:700;">الإجمالي (${list.length} صنف)</td><td style="font-weight:700;">${total.toFixed(2)} ج.م</td><td class="no-print"></td></tr></tfoot>
+      </table></div>
+      <div style="display:flex;gap:30px;flex-wrap:wrap;justify-content:space-between;margin-top:48px;">
+        ${sigLine('أخصائي المشتريات')}${sigLine('مندوب الشركة')}
+      </div>
+    </div>`;
 }
 
 async function loadMallInvoices(){
@@ -2923,7 +3071,7 @@ function switchTab(tab){
 
 const TAB_LABELS = {
   subs: 'الاشتراكات', payments: 'مدفوعات', profit: 'الربح', services: 'الخدمات',
-  clients: 'العملاء', invoices: 'الفواتير', mall: 'المول', ledger: 'مصاريفي', cards: 'كروت وديون', bankcards: 'كروت الدفع'
+  clients: 'العملاء', invoices: 'الفواتير', mall: 'المول', mallcoding: 'تكويد المول', ledger: 'مصاريفي', cards: 'كروت وديون', bankcards: 'كروت الدفع'
 };
 
 function toggleSideMenu(){
@@ -2984,6 +3132,12 @@ function render(){
     fab.innerHTML = '+ إضافة فاتورة';
     fab.onclick = () => openMallModal();
     html += renderMallTab();
+  } else if(activeTab === 'mallcoding'){
+    fab.style.display = 'flex';
+    fab.title = 'إضافة أصناف متكودة';
+    fab.innerHTML = '+ إضافة أصناف';
+    fab.onclick = () => openMallCodingModal();
+    html += renderMallCodingTab();
   } else if(activeTab === 'ledger'){
     fab.style.display = 'flex';
     fab.title = 'إضافة معاملة';
