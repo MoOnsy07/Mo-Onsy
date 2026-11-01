@@ -335,12 +335,8 @@
 <div class="modal-bg" id="paymentModalBg">
   <div class="modal">
     <h2 id="paymentModalTitle">إضافة دفعة جديدة</h2>
-    <label>وصف الخدمة</label>
-    <input id="p_desc" list="serviceNamesList" placeholder="مثال: تصميم لوجو - متجر روزا">
-    <label>نوع الخدمة (عشان تجميع الربح)</label>
+    <label>اسم الخدمة</label>
     <input id="p_service" list="serviceTypesList" placeholder="مثال: Shopify، أو أي خدمة جديدة">
-    <label>اسم العميل (اختياري)</label>
-    <input id="p_client" placeholder="مثال: أحمد محمد">
     <label>وسيلة التواصل</label>
     <select id="p_contactMethod" onchange="updatePaymentContactLabel()">
       <option value="whatsapp">واتساب</option>
@@ -350,13 +346,31 @@
     <input id="p_contactValue" list="clientContactList" placeholder="مثال: 201012345678">
     <label>قيمة المعاملة (التكلفة الأصلية قبل ربحك)</label>
     <div style="display:flex;gap:8px;">
-      <input id="p_costAmount" type="number" step="0.01" placeholder="مثال: 450" style="flex:1;">
-      <select id="p_costCurrency" style="width:auto;">
+      <input id="p_costAmount" type="number" step="0.01" placeholder="مثال: 450" style="flex:1;" oninput="updatePaymentCardInfo()">
+      <select id="p_costCurrency" style="width:auto;" onchange="updatePaymentCardInfo()">
         <option value="EGP">جنيه</option>
         <option value="USD">دولار</option>
         <option value="EUR">يورو</option>
         <option value="GBP">إسترليني</option>
       </select>
+    </div>
+    <label>اتدفعت من انهي كارت</label>
+    <select id="p_card" onchange="onPaymentCardChange()"></select>
+    <p id="p_cardInfo" style="display:none;color:var(--mint);font-size:12.5px;margin:6px 0 0;line-height:1.7;"></p>
+    <label>المدفوعة دي اشتراك؟</label>
+    <select id="p_isSub" onchange="document.getElementById('p_subCycleWrap').style.display = this.value === '1' ? 'block' : 'none'">
+      <option value="0">لا، دفعة عادية</option>
+      <option value="1">أيوه، اشتراك (يتضاف لقايمة الاشتراكات)</option>
+    </select>
+    <div id="p_subCycleWrap" style="display:none;">
+      <label>دورة الاشتراك</label>
+      <select id="p_subCycle">
+        <option value="1">كل شهر</option>
+        <option value="3">كل 3 شهور</option>
+        <option value="6">كل 6 شهور</option>
+        <option value="12">كل سنة</option>
+      </select>
+      <p style="color:var(--muted);font-size:12px;margin:6px 0 0;">تاريخ التجديد الجاي هيتحسب من تاريخ الدفع.</p>
     </div>
     <label>المبلغ المستلم من العميل</label>
     <input id="p_amount" type="number" step="0.01" placeholder="مثال: 500">
@@ -573,6 +587,8 @@
     <input id="pc_cost" type="number" step="0.01" placeholder="مثال: 450">
     <label>المبلغ اللي العميل بعتلك</label>
     <input id="pc_received" type="number" step="0.01" placeholder="مثال: 500">
+    <label>اتدفعت من انهي كارت</label>
+    <select id="pc_card"></select>
     <label>طريقة الاستلام</label>
     <select id="pc_receivedMethod">
       <option value="instapay">إنستاباي</option>
@@ -663,6 +679,8 @@
     <p style="color:var(--amber);font-size:11.5px;margin:6px 0 0;">متكتبش رقم الكارت كامل ولا الـ CVV ولا تاريخ الانتهاء هنا أبدًا.</p>
     <label>نسبة عمولة البنك من المعاملة (%)</label>
     <input id="bc_pct" type="number" step="0.01" placeholder="مثلاً 2.5">
+    <label>نسبة الكاش باك اللي الكارت بيرجّعه (%)</label>
+    <input id="bc_cashback" type="number" step="0.01" placeholder="مثلاً 1 (سيبها فاضية لو مفيش)">
     <label>ملاحظة (اختياري)</label>
     <input id="bc_notes" placeholder="">
     <p id="bcFormError" style="color:var(--red);font-size:12.5px;margin:14px 0 0;display:none;"></p>
@@ -883,7 +901,12 @@ function toRemotePaymentShape(p){
     received_method: p.receivedMethod || 'other',
     cost_amount: p.costAmount || 0,
     cost_currency: p.costCurrency || 'EGP',
-    service: p.service || 'أخرى'
+    service: p.service || 'أخرى',
+    card_id: p.cardId || null,
+    sub_id: p.subId || null,
+    commission: p.commission || 0,
+    cashback: p.cashback || 0,
+    cost_egp: p.costEgp || 0
   };
 }
 
@@ -901,7 +924,12 @@ function fromRemotePaymentShape(r){
     receivedMethod: r.received_method || 'other',
     costAmount: r.cost_amount || 0,
     costCurrency: r.cost_currency || 'EGP',
-    service: r.service || 'أخرى'
+    service: r.service || 'أخرى',
+    cardId: r.card_id || '',
+    subId: r.sub_id || '',
+    commission: Number(r.commission || 0),
+    cashback: Number(r.cashback || 0),
+    costEgp: Number(r.cost_egp || 0)
   };
 }
 
@@ -1765,6 +1793,7 @@ function openPayConfirmModal(subId){
   document.getElementById('pc_cost').value = '';
   document.getElementById('pc_received').value = '';
   document.getElementById('pc_receivedMethod').value = 'instapay';
+  document.getElementById('pc_card').innerHTML = cardOptionsHtml('');
   document.getElementById('payConfirmError').style.display = 'none';
   document.getElementById('payConfirmModalBg').classList.add('open');
 }
@@ -1796,6 +1825,7 @@ async function handlePayConfirm(){
   await saveData();
 
   // 2) إضافة دفعة جديدة تلقائي في تبويب المدفوعات
+  const cf = await cardFieldsFor(document.getElementById('pc_card').value, cost, 'EGP');
   payments.push({
     id: 'pay_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
     description: 'تجديد ' + sub.store,
@@ -1809,7 +1839,9 @@ async function handlePayConfirm(){
     currency: 'EGP',
     receivedMethod,
     paidDate: new Date().toISOString().slice(0,10),
-    profit: received - cost
+    profit: received - cost - cf.commission,
+    cardId: cf.cardId, commission: cf.commission, cashback: cf.cashback, costEgp: cf.costEgp,
+    subId: sub.id
   });
   await savePayments();
 
@@ -1857,9 +1889,7 @@ function openPaymentModal(p){
   editingPaymentId = p ? p.id : null;
   document.getElementById('paymentModalTitle').textContent = p ? 'تعديل دفعة' : 'إضافة دفعة جديدة';
   populateDatalists();
-  document.getElementById('p_desc').value = p ? p.description : '';
-  document.getElementById('p_service').value = p ? (p.service || 'أخرى') : 'أخرى';
-  document.getElementById('p_client').value = p ? (p.client || '') : '';
+  document.getElementById('p_service').value = p ? (p.service || 'أخرى') : '';
   document.getElementById('p_contactMethod').value = p ? (p.contactMethod || 'whatsapp') : 'whatsapp';
   document.getElementById('p_contactValue').value = p ? (p.contactValue || '') : '';
   document.getElementById('p_costAmount').value = p ? (p.costAmount || '') : '';
@@ -1870,8 +1900,90 @@ function openPaymentModal(p){
   document.getElementById('p_date').value = p ? (p.paidDate || '') : new Date().toISOString().slice(0,10);
   document.getElementById('p_profit').value = p ? (p.profit || '') : '';
   updatePaymentContactLabel();
+  populatePaymentCardSelect(p ? p.cardId : '');
+  updatePaymentCardInfo();
+  const linkedSub = p && p.subId ? subs.find(x => x.id === p.subId) : null;
+  document.getElementById('p_isSub').value = linkedSub ? '1' : '0';
+  document.getElementById('p_subCycle').value = String(linkedSub ? (linkedSub.cycleMonths || 1) : 1);
+  document.getElementById('p_subCycleWrap').style.display = linkedSub ? 'block' : 'none';
   document.getElementById('paymentFormError').style.display = 'none';
   document.getElementById('paymentModalBg').classList.add('open');
+}
+
+/* ====== كارت الدفع جوه مودال المدفوعات ====== */
+let bankCardFromPayment = false;
+let paymentExcelCardId = '';
+let paymentExcelSwapDM = true;
+try{ const v = localStorage.getItem('paymentExcelSwapDM'); if(v !== null) paymentExcelSwapDM = v === '1'; }catch(e){}
+let paymentRateCache = {};
+let paymentCardInfoSeq = 0;
+const round2 = n => Math.round(n * 100) / 100;
+
+async function costToEgp(amount, currency){
+  if(!amount) return 0;
+  if(currency === 'EGP') return amount;
+  const c = paymentRateCache[currency];
+  let rate;
+  if(c && Date.now() - c.t < 5*60*1000) rate = c.rate;
+  else {
+    rate = await fetchRateFor(currency);
+    if(rate) paymentRateCache[currency] = { rate, t: Date.now() };
+  }
+  return rate ? amount * rate : null;
+}
+async function cardFieldsFor(cardId, costAmount, costCurrency){
+  const card = bankCardById(cardId);
+  if(!card) return { cardId: '', commission: 0, cashback: 0, costEgp: 0, ok: true };
+  if(!costAmount) return { cardId, commission: 0, cashback: 0, costEgp: 0, ok: true };
+  const egp = await costToEgp(costAmount, costCurrency);
+  if(egp === null) return { cardId, commission: 0, cashback: 0, costEgp: 0, ok: false };
+  return { cardId, costEgp: round2(egp), commission: round2(egp * card.commissionPct / 100), cashback: round2(egp * card.cashbackPct / 100), ok: true };
+}
+function cardOptionsHtml(selectedId){
+  return '<option value="">بدون كارت</option>' + bankCards.map(c => `<option value="${c.id}" ${c.id === selectedId ? 'selected' : ''}>${bankCardTitle(c)}</option>`).join('');
+}
+// يطابق نص من الإكسل (آخر ٤ أرقام أو اسم البنك أو الاسم المميز) مع كارت
+function matchCardFromText(txt){
+  const t = String(txt || '').trim().toLowerCase();
+  if(!t) return '';
+  const digits = t.replace(/\D/g,'');
+  let m = digits.length >= 4 ? bankCards.filter(c => c.last4 && c.last4 === digits.slice(-4)) : [];
+  if(m.length === 0) m = bankCards.filter(c => (c.label && c.label.toLowerCase() === t) || c.bank.toLowerCase() === t);
+  return m.length === 1 ? m[0].id : '';
+}
+function populatePaymentCardSelect(selectedId){
+  const sel = document.getElementById('p_card');
+  sel.innerHTML = '<option value="">بدون كارت</option>'
+    + bankCards.map(c => `<option value="${c.id}">${bankCardTitle(c)}</option>`).join('')
+    + '<option value="__new">+ إضافة كارت جديد</option>';
+  sel.value = (selectedId && bankCardById(selectedId)) ? selectedId : '';
+}
+function onPaymentCardChange(){
+  const sel = document.getElementById('p_card');
+  if(sel.value === '__new'){
+    sel.value = '';
+    bankCardFromPayment = true;
+    openBankCardModal();
+    return;
+  }
+  updatePaymentCardInfo();
+}
+async function updatePaymentCardInfo(){
+  const seq = ++paymentCardInfoSeq;
+  const el = document.getElementById('p_cardInfo');
+  const card = bankCardById(document.getElementById('p_card').value);
+  if(!card){ el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  const cost = parseFloat(document.getElementById('p_costAmount').value) || 0;
+  if(!cost){
+    el.textContent = `عمولة الكارت ${card.commissionPct}% · كاش باك ${card.cashbackPct}% — اكتب قيمة المعاملة وهتتحسب هنا`;
+    return;
+  }
+  const egp = await costToEgp(cost, document.getElementById('p_costCurrency').value);
+  if(seq !== paymentCardInfoSeq) return;
+  if(egp === null){ el.textContent = 'اتعذر جلب سعر الصرف لحساب العمولة'; return; }
+  el.innerHTML = `عمولة الكارت (${card.commissionPct}%): <b>${round2(egp * card.commissionPct / 100).toFixed(2)} ج.م</b>`
+    + `<br>كاش باك متوقع (${card.cashbackPct}%): <b>${round2(egp * card.cashbackPct / 100).toFixed(2)} ج.م</b>`;
 }
 function closePaymentModal(){
   document.getElementById('paymentModalBg').classList.remove('open');
@@ -1908,9 +2020,13 @@ async function autoCalcPaymentProfit(){
     receivedEgp = amount * rate2;
   }
 
-  const profit = receivedEgp - costEgp;
+  const card = bankCardById(document.getElementById('p_card').value);
+  const commission = card ? costEgp * card.commissionPct / 100 : 0;
+  const profit = receivedEgp - costEgp - commission;
   document.getElementById('p_profit').value = profit.toFixed(2);
-  showToast('اتحسب الربح كفرق بين المستلم وقيمة المعاملة، تقدر تعدله لو حابب');
+  showToast(card
+    ? 'اتحسب الربح = المستلم − قيمة المعاملة − عمولة الكارت، تقدر تعدله لو حابب'
+    : 'اتحسب الربح كفرق بين المستلم وقيمة المعاملة، تقدر تعدله لو حابب');
 }
 
 function receivedMethodLabel(m){
@@ -1918,9 +2034,7 @@ function receivedMethodLabel(m){
 }
 
 async function handlePaymentSave(){
-  const description = document.getElementById('p_desc').value.trim();
-  const service = document.getElementById('p_service').value;
-  const client = document.getElementById('p_client').value.trim();
+  const service = document.getElementById('p_service').value.trim();
   const contactMethod = document.getElementById('p_contactMethod').value;
   const contactValue = document.getElementById('p_contactValue').value.trim();
   const costAmount = parseFloat(document.getElementById('p_costAmount').value) || 0;
@@ -1930,30 +2044,67 @@ async function handlePaymentSave(){
   const receivedMethod = document.getElementById('p_receivedMethod').value;
   const paidDate = document.getElementById('p_date').value;
   const profit = parseFloat(document.getElementById('p_profit').value) || 0;
+  const cardId = document.getElementById('p_card').value;
 
   const errEl = document.getElementById('paymentFormError');
-  if(!description || !amount){
-    errEl.textContent = 'من فضلك اكتب وصف الخدمة ومبلغ صحيح';
+  if(!service || !amount){
+    errEl.textContent = 'من فضلك اكتب اسم الخدمة ومبلغ صحيح';
     errEl.style.display = 'block';
     return;
   }
   errEl.style.display = 'none';
 
+  // العمولة والكاش باك بيتحسبوا من نسب الكارت المختار على قيمة المعاملة (بالجنيه)
+  const card = bankCardById(cardId);
+  let commission = 0, cashback = 0, costEgp = 0;
+  if(card && costAmount){
+    const egp = await costToEgp(costAmount, costCurrency);
+    if(egp === null){
+      errEl.textContent = 'اتعذر جلب سعر الصرف لحساب عمولة الكارت، جرّب تاني';
+      errEl.style.display = 'block';
+      return;
+    }
+    costEgp = round2(egp);
+    commission = round2(egp * card.commissionPct / 100);
+    cashback = round2(egp * card.cashbackPct / 100);
+  }
+  const description = service; // العمود القديم في الداتا بيز بنملّيه باسم الخدمة
+
+  // اشتراك؟ لو أيوه بنضيفه/بنحدّثه في قايمة الاشتراكات
+  const isSub = document.getElementById('p_isSub').value === '1';
+  const cycleMonths = parseInt(document.getElementById('p_subCycle').value, 10) || 1;
+  const existingPay = editingPaymentId ? payments.find(x => x.id === editingPaymentId) : null;
+  let subId = existingPay ? (existingPay.subId || '') : '';
+  let subsChanged = false;
+  if(isSub){
+    const fields = { store: service, service, renewalDate: addMonthsClamped(paidDate, cycleMonths), cycleMonths, amount: costAmount, currency: costCurrency, contactMethod, contactValue, lastPaid: paidDate };
+    const sIdx = subId ? subs.findIndex(x => x.id === subId) : -1;
+    if(sIdx > -1){ subs[sIdx] = {...subs[sIdx], ...fields}; }
+    else {
+      subId = 'sub_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
+      subs.push({ id: subId, notes: '', ...fields });
+    }
+    subsChanged = true;
+  } else {
+    subId = ''; // فك الربط بس، الاشتراك نفسه بيفضل في القايمة لو كان موجود (تقدر تحذفه من هناك)
+  }
+
   if(editingPaymentId){
     const idx = payments.findIndex(p => p.id === editingPaymentId);
     if(idx > -1){
-      payments[idx] = {...payments[idx], description, service, client, contactMethod, contactValue, costAmount, costCurrency, amount, currency, receivedMethod, paidDate, profit};
+      payments[idx] = {...payments[idx], description, service, contactMethod, contactValue, costAmount, costCurrency, amount, currency, receivedMethod, paidDate, profit, cardId, commission, cashback, costEgp, subId};
     }
   } else {
     payments.push({
       id: 'pay_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
-      description, service, client, contactMethod, contactValue, costAmount, costCurrency, amount, currency, receivedMethod, paidDate, profit
+      description, service, client: '', contactMethod, contactValue, costAmount, costCurrency, amount, currency, receivedMethod, paidDate, profit, cardId, commission, cashback, costEgp, subId
     });
   }
+  if(subsChanged) await saveData();
   await savePayments();
   closePaymentModal();
   render();
-  showToast(editingPaymentId ? 'تم تحديث الدفعة' : 'تم إضافة الدفعة');
+  showToast((editingPaymentId ? 'تم تحديث الدفعة' : 'تم إضافة الدفعة') + (subsChanged ? ' واتسجلت في الاشتراكات ✓' : ''));
 }
 
 /* ====== إضافة عدة دفعات مختلفة دفعة واحدة ====== */
@@ -1975,6 +2126,9 @@ function paymentBulkRowHtml(rowId){
           <option value="etisalat_cash">اتصالات كاش</option>
           <option value="other">أخرى</option>
         </select>
+      </div>
+      <div style="flex:1;min-width:130px;"><label style="margin-top:0;font-size:11px;">الكارت</label>
+        <select id="pBulk_card${rowId}">${cardOptionsHtml('')}</select>
       </div>
       <button type="button" class="icon-btn" style="flex:none;" onclick="removePaymentBulkRow(${rowId})" title="حذف الصف">✕</button>
     </div>
@@ -2009,15 +2163,19 @@ async function handlePaymentBulkSave(){
   const chosenDate = document.getElementById('paymentBulk_date').value || new Date().toISOString().slice(0,10);
   const errEl = document.getElementById('paymentBulkFormError');
   let added = 0;
+  let rateFailed = 0;
 
-  rows.forEach(row => {
+  for(const row of rows){
     const rowId = row.id.replace('paymentBulkRow', '');
     const service = document.getElementById('pBulk_service' + rowId).value.trim();
     const contactValue = document.getElementById('pBulk_contact' + rowId).value.trim();
     const cost = parseFloat(document.getElementById('pBulk_cost' + rowId).value) || 0;
     const received = parseFloat(document.getElementById('pBulk_received' + rowId).value) || 0;
     const method = document.getElementById('pBulk_method' + rowId).value;
-    if(!received) return; // تجاهل أي صف فاضي
+    const rowCardId = document.getElementById('pBulk_card' + rowId).value;
+    if(!received) continue; // تجاهل أي صف فاضي
+    const cf = await cardFieldsFor(rowCardId, cost, 'EGP');
+    if(!cf.ok) rateFailed++;
 
     // لو الرقم غالبيته أرقام، نعتبره واتساب؛ غير كده نعتبره اسم أكونت ماسنجر
     const digitsOnly = contactValue.replace(/\D/g,'');
@@ -2032,10 +2190,11 @@ async function handlePaymentBulkSave(){
       amount: received, currency: 'EGP',
       receivedMethod: method,
       paidDate: chosenDate,
-      profit: received - cost
+      profit: received - cost - cf.commission,
+      cardId: cf.cardId, commission: cf.commission, cashback: cf.cashback, costEgp: cf.costEgp
     });
     added++;
-  });
+  }
 
   if(added === 0){
     errEl.textContent = 'اكتب مبلغ مستلم لدفعة واحدة على الأقل';
@@ -2047,7 +2206,7 @@ async function handlePaymentBulkSave(){
   await savePayments();
   closePaymentBulkModal();
   render();
-  showToast(`تم تسجيل ${added} دفعة ✓`);
+  showToast(`تم تسجيل ${added} دفعة ✓`+ (rateFailed ? ` (${rateFailed} صف اتعذر حساب عمولته لعدم جلب سعر الصرف)` : ''));
 }
 
 /* ====== رفع شيت إكسل يومي (بيستورد بس الصفوف الجديدة اللي زودتها عن آخر مرة) ====== */
@@ -2076,18 +2235,41 @@ function normalizeCurrency(text){
   return 'EGP';
 }
 
-function parseExcelDateValue(val){
-  if(val instanceof Date && !isNaN(val)) return toISODateLocal(val);
+function parseExcelDateValue(val, swapDM){
+  const iso = (y, mo, d) => {
+    y = Number(y); mo = Number(mo); d = Number(d);
+    if(y < 100) y += 2000;
+    const dt = new Date(y, mo - 1, d);
+    if(dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null; // تاريخ مش منطقي (زي 31/2)
+    return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  };
+  // تاريخ حقيقي من الإكسل: بنزوّد 12 ساعة عشان فروق التوقيت الصغيرة بتاعة المكتبة ما تأخرش اليوم
+  // swapDM: الإكسل على إعدادات أمريكي بيخزّن 2/10/2026 كـ 10 فبراير، فبنقلب اليوم والشهر لو القلب منطقي (اليوم ≤ 12)
+  const fromParts = (y, mo, d) => (swapDM && d <= 12 && mo !== d) ? (iso(y, d, mo) || iso(y, mo, d)) : iso(y, mo, d);
+  if(val instanceof Date && !isNaN(val)){
+    const dt = new Date(val.getTime() + 12*3600*1000);
+    return fromParts(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
+  }
+  // رقم تسلسلي من الإكسل (زي 46302)
+  if(typeof val === 'number' && val > 20000 && val < 80000){
+    const dt = new Date(Math.round((val - 25569) * 86400000) + 12*3600*1000);
+    return fromParts(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate());
+  }
   if(typeof val === 'string' && val.trim()){
-    const s = val.trim();
-    // صيغة سنة-شهر-يوم (مش فيها لبس، زي 2026-09-05)
-    let m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/);
-    if(m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
-    // صيغة يوم-شهر-سنة (الشكل المصري المعتاد، زي 5/9/2026 يعني 5 سبتمبر)
-    m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
-    if(m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+    // نحوّل الأرقام العربية/الهندية لأرقام عادية ونشيل أي وقت بعد التاريخ
+    let s = val.trim()
+      .replace(/[\u0660-\u0669]/g, c => String(c.charCodeAt(0) - 0x660))
+      .replace(/[\u06F0-\u06F9]/g, c => String(c.charCodeAt(0) - 0x6F0))
+      .replace(/[\u200e\u200f]/g, '')
+      .split(/[ T]/)[0];
+    // سنة-شهر-يوم (زي 2026-10-05)
+    let m = s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/);
+    if(m){ const r = iso(m[1], m[2], m[3]); if(r) return r; }
+    // يوم/شهر/سنة (الشكل المصري، زي 2/10/2026 يعني 2 أكتوبر، وكمان 2-10-26 أو 2.10.2026)
+    m = s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2}|\d{4})$/);
+    if(m){ const r = iso(m[3], m[2], m[1]); if(r) return r; }
     // أي صيغة تانية، نسيب المتصفح يحاول يفهمها
-    const d = new Date(s);
+    const d = new Date(val);
     if(!isNaN(d)) return toISODateLocal(d);
   }
   return new Date().toISOString().slice(0,10);
@@ -2103,9 +2285,10 @@ function mapExcelHeaders(headerRow){
     cost: ['التكلفة'],
     received: ['اللي العميل بعته', 'المستلم', 'المبلغ المستلم'],
     profit: ['الربح'],
-    currency: ['نوع العملة', 'العملة']
+    currency: ['نوع العملة', 'العملة'],
+    card: ['الكارت', 'كارت', 'الكارت المستخدم']
   };
-  const defaults = { service:0, contact:1, method:2, date:3, cost:4, received:5, profit:6, currency:7 };
+  const defaults = { service:0, contact:1, method:2, date:3, cost:4, received:5, profit:6, currency:7, card:-1 };
   const map = {};
   Object.keys(aliases).forEach(key => {
     const idx = headerRow.findIndex(h => aliases[key].some(a => normalizeArabicText(h) === normalizeArabicText(a)));
@@ -2130,6 +2313,7 @@ async function handlePaymentExcelUpload(event){
 
     let totalAdded = 0;
     let sheetsWithNew = [];
+    let excelRateFailed = 0;
 
     for(const sheetName of wb.SheetNames){
       const sheet = wb.Sheets[sheetName];
@@ -2144,7 +2328,8 @@ async function handlePaymentExcelUpload(event){
       const newRows = dataRows.slice(lastCount);
 
       let addedInSheet = 0;
-      newRows.forEach((r, i) => {
+      for(let i = 0; i < newRows.length; i++){
+        const r = newRows[i];
         const service = String(r[cols.service] || '').trim();
         const contactValue = String(r[cols.contact] || '').trim();
         const methodRaw = String(r[cols.method] || '').trim();
@@ -2153,7 +2338,7 @@ async function handlePaymentExcelUpload(event){
         const receivedRaw = r[cols.received];
         const profit = parseFloat(r[cols.profit]) || 0;
         const currencyRaw = String(r[cols.currency] || '').trim();
-        if(!service && !cost) return;
+        if(!service && !cost) continue;
 
         const received = (receivedRaw !== '' && receivedRaw !== null && receivedRaw !== undefined)
           ? (parseFloat(receivedRaw) || 0)
@@ -2162,6 +2347,10 @@ async function handlePaymentExcelUpload(event){
         const digitsOnly = contactValue.replace(/\D/g,'');
         const contactMethod = digitsOnly.length >= 8 ? 'whatsapp' : (contactValue ? 'messenger' : 'whatsapp');
         const currency = normalizeCurrency(currencyRaw);
+        // الكارت: من عمود "الكارت" في الشيت لو موجود ومتطابق، وإلا الكارت الافتراضي اللي اخترته قبل الرفع
+        const colCard = cols.card > -1 ? matchCardFromText(r[cols.card]) : '';
+        const cf = await cardFieldsFor(colCard || paymentExcelCardId, cost, currency);
+        if(!cf.ok) excelRateFailed++;
 
         payments.push({
           id: 'pay_' + Date.now() + '_' + Math.random().toString(36).slice(2,7) + '_' + sheetName + '_' + i,
@@ -2171,11 +2360,12 @@ async function handlePaymentExcelUpload(event){
           costAmount: cost, costCurrency: currency,
           amount: received, currency,
           receivedMethod: normalizeReceivedMethod(methodRaw),
-          paidDate: parseExcelDateValue(dateRaw),
-          profit
+          paidDate: parseExcelDateValue(dateRaw, paymentExcelSwapDM),
+          profit,
+          cardId: cf.cardId, commission: cf.commission, cashback: cf.cashback, costEgp: cf.costEgp
         });
         addedInSheet++;
-      });
+      }
 
       if(addedInSheet > 0){
         totalAdded += addedInSheet;
@@ -2192,7 +2382,7 @@ async function handlePaymentExcelUpload(event){
 
     await savePayments();
     render();
-    showToast(`تم استيراد ${totalAdded} دفعة جديدة: ${sheetsWithNew.join('، ')}`);
+    showToast(`تم استيراد ${totalAdded} دفعة جديدة: ${sheetsWithNew.join('، ')}` + (excelRateFailed ? ` (${excelRateFailed} صف اتعذر حساب عمولته لعدم جلب سعر الصرف)` : ''));
   }catch(e){
     console.error('excel import error', e);
     showToast('حصل خطأ في قراءة ملف الإكسل، اتأكد من شكل الأعمدة', true);
@@ -2244,7 +2434,7 @@ async function handlePaymentImportSave(){
       amount: item.amount || 0,
       currency: item.currency || 'EGP',
       receivedMethod: item.receivedMethod || 'other',
-      paidDate: item.paidDate || new Date().toISOString().slice(0,10),
+      paidDate: parseExcelDateValue(item.paidDate),
       profit: (typeof item.profit === 'number') ? item.profit : (item.amount||0) - (item.costAmount||0)
     });
     added++;
@@ -4538,6 +4728,16 @@ function renderProfitTab(){
   return html;
 }
 
+function cardPaymentsAgg(list){
+  const m = {};
+  list.forEach(p => {
+    if(!p.cardId) return;
+    const a = m[p.cardId] || (m[p.cardId] = { count: 0, total: 0, commission: 0, cashback: 0 });
+    a.count++; a.total += p.costEgp || 0; a.commission += p.commission || 0; a.cashback += p.cashback || 0;
+  });
+  return m;
+}
+
 function renderPaymentsTab(){
   const months = getAvailableMonths(payments, 'paidDate');
   const filtered = payments.filter(p => {
@@ -4546,9 +4746,11 @@ function renderPaymentsTab(){
     if(paymentsDateTo && (p.paidDate || '') > paymentsDateTo) return false;
     if(paymentsSearchQuery){
       const q = paymentsSearchQuery.trim().toLowerCase();
-      const matchDesc = (p.description || '').toLowerCase().includes(q);
-      const matchClient = (p.client || '').toLowerCase().includes(q);
-      if(!matchDesc && !matchClient) return false;
+      const pc = bankCardById(p.cardId);
+      const matchService = (p.service || '').toLowerCase().includes(q);
+      const matchContact = (p.contactValue || '').toLowerCase().includes(q);
+      const matchCard = pc ? (pc.bank + ' ' + pc.last4).toLowerCase().includes(q) : false;
+      if(!matchService && !matchContact && !matchCard) return false;
     }
     return true;
   });
@@ -4570,6 +4772,13 @@ function renderPaymentsTab(){
     <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="openPaymentBulkModal()">📦 إضافة عدة دفعات دفعة واحدة</button>
     <button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="document.getElementById('paymentExcelInput').click()">📤 رفع شيت إكسل اليومي</button>
     <input type="file" id="paymentExcelInput" accept=".xlsx,.xls" style="display:none" onchange="handlePaymentExcelUpload(event)">
+    <select style="flex:none;width:auto;min-width:200px;" onchange="paymentExcelCardId=this.value" title="الكارت اللي هيتسجل على صفوف الشيت (لو الشيت فيه عمود اسمه الكارت، هيتقدّم عليه)">
+      ${bankCards.length ? cardOptionsHtml(paymentExcelCardId).replace('بدون كارت', 'كارت الشيت: بدون كارت') : '<option value="">مفيش كروت متسجلة</option>'}
+    </select>
+    <label style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);margin:0;cursor:pointer;" title="لو الإكسل عندك بيقرا 2/10/2026 على إنها 10 فبراير، سيبه متفعّل">
+      <input type="checkbox" style="width:auto;" ${paymentExcelSwapDM ? 'checked' : ''} onchange="paymentExcelSwapDM=this.checked;try{localStorage.setItem('paymentExcelSwapDM', this.checked ? '1' : '0');}catch(e){}">
+      التواريخ في الشيت يوم/شهر (اقلب اليوم والشهر)
+    </label>
   </div>`;
 
   if(Object.keys(paymentsImportSheetCounts).length > 0){
@@ -4587,8 +4796,8 @@ function renderPaymentsTab(){
   }
 
   html += `<div class="calc-card" style="margin-bottom:16px;padding:14px 16px;">
-    <label style="margin-top:0;">🔍 دور باسم الخدمة أو العميل</label>
-    <input id="paymentsSearchInput" placeholder="مثال: Shopify أو اسم العميل" value="${escapeHtml(paymentsSearchQuery)}" onkeydown="if(event.key==='Enter') applyPaymentsFilters()">
+    <label style="margin-top:0;">🔍 دور باسم الخدمة أو وسيلة التواصل أو الكارت</label>
+    <input id="paymentsSearchInput" placeholder="مثال: Shopify أو رقم واتساب أو CIB" value="${escapeHtml(paymentsSearchQuery)}" onkeydown="if(event.key==='Enter') applyPaymentsFilters()">
     <div class="calc-row" style="margin-top:10px;">
       <div><label style="margin-top:0;">من تاريخ</label><input id="paymentsDateFromInput" type="date" value="${paymentsDateFrom}"></div>
       <div><label style="margin-top:0;">لحد تاريخ</label><input id="paymentsDateToInput" type="date" value="${paymentsDateTo}"></div>
@@ -4628,6 +4837,19 @@ function renderPaymentsTab(){
     </div>`).join('')}
   </div>`;
 
+  const cardAgg = cardPaymentsAgg(filtered);
+  const cardAggIds = Object.keys(cardAgg);
+  if(cardAggIds.length){
+    html += `<div class="section-title no-print">💳 ملخص الكروت <span class="count-pill">${cardAggIds.length}</span></div>
+      <div class="cards no-print" style="margin-bottom:20px;">
+        ${cardAggIds.map(id => { const a = cardAgg[id]; return `<div class="card" style="cursor:default;">
+          <p class="store">${bankCardTitle(bankCardById(id))}</p>
+          <p class="client">${a.count} معاملة &middot; ${a.total.toFixed(2)} ج.م</p>
+          <div class="meta"><span>عمولة ${a.commission.toFixed(2)} ج.م</span><span class="amount" style="color:var(--mint);">كاش باك متوقع ${a.cashback.toFixed(2)} ج.م</span></div>
+        </div>`; }).join('')}
+      </div>`;
+  }
+
   let sectionTitle = 'كل المدفوعات';
   if(paymentsMonthFilter) sectionTitle = 'دفعات ' + monthLabel(paymentsMonthFilter);
   else if(paymentsDateFrom || paymentsDateTo || paymentsSearchQuery) sectionTitle = 'نتائج الفلترة';
@@ -4636,15 +4858,15 @@ function renderPaymentsTab(){
     html += `<div class="empty">مفيش دفعات في الفترة دي. دوس على زرار (+) تحت عشان تضيف دفعة.</div>`;
   } else {
     html += `<table><thead><tr>
-      <th>الوصف</th><th>الخدمة</th><th>العميل</th><th>تواصل</th><th>قيمة المعاملة</th><th>المبلغ المستلم</th><th>طريقة الاستلام</th><th>الربح</th><th>التاريخ</th><th></th>
+      <th>اسم الخدمة</th><th>تواصل</th><th>الكارت</th><th>قيمة المعاملة</th><th>العمولة</th><th>المبلغ المستلم</th><th>طريقة الاستلام</th><th>الربح</th><th>التاريخ</th><th></th>
     </tr></thead><tbody>`;
     sorted.forEach(p => {
       html += `<tr>
-        <td>${escapeHtml(p.description)}</td>
         <td>${fmtService(p.service || 'أخرى')}</td>
-        <td>${escapeHtml(p.client || '—')}</td>
         <td>${contactCellHtml(p)}</td>
+        <td>${(() => { const pc = bankCardById(p.cardId); return pc ? escapeHtml(pc.bank) + ' &bull;&bull;' + escapeHtml(pc.last4 || '') : '—'; })()}</td>
         <td>${(p.costAmount||0).toFixed(2)} ${paymentCurrencyLabel(p.costCurrency||'EGP')}</td>
+        <td>${p.cardId ? (p.commission||0).toFixed(2) + ' ج.م' : '—'}</td>
         <td>${(p.amount||0).toFixed(2)} ${paymentCurrencyLabel(p.currency)}</td>
         <td>${fmtService(receivedMethodLabel(p.receivedMethod||'other'))}</td>
         <td style="color:var(--mint);">${(p.profit||0).toFixed(2)} ج.م</td>
@@ -4847,7 +5069,7 @@ async function loadBankCardsData(){
   if(!isConfigured()) return;
   try{
     const [c, h, t] = await Promise.all([sbGetAll('bank_cards'), sbGetAll('card_holders'), sbGetAll('card_txns')]);
-    bankCards = c.map(r => ({ id: r.id, bank: r.bank, label: r.label || '', last4: r.last4 || '', commissionPct: Number(r.commission_pct || 0), notes: r.notes || '' }));
+    bankCards = c.map(r => ({ id: r.id, bank: r.bank, label: r.label || '', last4: r.last4 || '', commissionPct: Number(r.commission_pct || 0), cashbackPct: Number(r.cashback_pct || 0), notes: r.notes || '' }));
     cardHolders = h.map(r => ({ id: r.id, cardId: r.card_id, name: r.holder_name, contact: r.contact || '', purpose: r.purpose || '', givenAt: r.given_at, returnedAt: r.returned_at || null }));
     cardTxns = t.map(r => ({ id: r.id, cardId: r.card_id, date: r.txn_date, amount: Number(r.amount || 0), description: r.description || '', known: r.known !== false, holderId: r.holder_id || null, commission: Number(r.commission || 0) }));
   }catch(e){
@@ -4934,6 +5156,33 @@ function renderBankCardsTab(){
     </div>
   </div>`;
 
+  // داشبورد الفيز: مدفوعات الخدمات اللي اتدفعت بكل كارت
+  if(bankCards.length){
+    const z = () => ({ count: 0, total: 0, commission: 0, cashback: 0 });
+    const aggAll = cardPaymentsAgg(payments);
+    const aggMonth = cardPaymentsAgg(payments.filter(p => (p.paidDate||'').slice(0,7) === ym));
+    const sum = m => Object.values(m).reduce((a, x) => { a.count += x.count; a.total += x.total; a.commission += x.commission; a.cashback += x.cashback; return a; }, z());
+    const tm = sum(aggMonth), ta = sum(aggAll);
+    const tile = (title, a, color) => `<div class="card" style="cursor:default;${color ? 'border-color:' + color + ';' : ''}">
+      <p class="client" style="margin-bottom:6px;">${title}</p>
+      <p class="store" style="font-size:18px;">${a.count} معاملة &middot; ${a.total.toFixed(2)} ج.م</p>
+      <div class="meta"><span>عمولة ${a.commission.toFixed(2)}</span><span class="amount" style="color:var(--mint);">كاش باك ${a.cashback.toFixed(2)}</span></div>
+    </div>`;
+    const rows = bankCards.map(c => {
+      const m = aggMonth[c.id] || z(), a = aggAll[c.id] || z();
+      return `<tr><td>${bankCardTitle(c)}</td><td>${c.commissionPct}%</td><td>${c.cashbackPct}%</td>
+        <td>${m.total.toFixed(2)}</td><td>${m.commission.toFixed(2)}</td><td style="color:var(--mint);">${m.cashback.toFixed(2)}</td>
+        <td>${a.total.toFixed(2)}</td><td>${a.commission.toFixed(2)}</td><td style="color:var(--mint);">${a.cashback.toFixed(2)}</td></tr>`;
+    }).join('');
+    html += `<div class="section-title">📊 داشبورد الفيز</div>
+      <div class="cards" style="margin-bottom:14px;">${tile('الشهر ده (كل الكروت)', tm)}${tile('الإجمالي (كل الكروت)', ta, 'var(--mint)')}</div>
+      <div style="overflow-x:auto;margin-bottom:26px;"><table><thead><tr>
+        <th>الكارت</th><th>العمولة</th><th>الكاش باك</th>
+        <th>مدفوع الشهر</th><th>عمولة الشهر</th><th>كاش باك الشهر</th>
+        <th>إجمالي المدفوع</th><th>إجمالي العمولة</th><th>إجمالي الكاش باك</th>
+      </tr></thead><tbody>${rows}</tbody></table></div>`;
+  }
+
   html += `<div class="section-title">💳 الكروت <span class="count-pill">${bankCards.length}</span></div>`;
   html += `<button class="btn btn-ghost" style="width:100%;margin-bottom:14px;" onclick="openBankCardModal()">+ إضافة كارت</button>`;
   if(bankCards.length === 0){
@@ -4946,7 +5195,18 @@ function renderBankCardsTab(){
       const aLinks = activeLinksFor(c.id);
       return `<div class="card">
         <p class="store">${bankCardTitle(c)}</p>
-        <p class="client">عمولة البنك: ${c.commissionPct}% من كل معاملة${c.notes ? ' &middot; ' + escapeHtml(c.notes) : ''}</p>
+        <p class="client">عمولة البنك: ${c.commissionPct}% &middot; كاش باك: ${c.cashbackPct}%${c.notes ? ' &middot; ' + escapeHtml(c.notes) : ''}</p>
+        ${(() => {
+          const mine = payments.filter(p => p.cardId === c.id);
+          const z = { count: 0, total: 0, commission: 0, cashback: 0 };
+          const all = cardPaymentsAgg(mine)[c.id] || z;
+          const mo = cardPaymentsAgg(mine.filter(p => (p.paidDate||'').slice(0,7) === ym))[c.id] || z;
+          const line = (t, a) => `<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;margin-top:4px;"><span style="color:var(--muted);">${t}: ${a.count} معاملة &middot; ${a.total.toFixed(2)} ج.م</span><span>عمولة ${a.commission.toFixed(2)} &middot; <b style="color:var(--mint);">كاش باك متوقع ${a.cashback.toFixed(2)}</b></span></div>`;
+          return `<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:10px;">
+            <p style="color:var(--muted);font-size:12px;margin:0 0 2px;">مدفوعات الخدمات من الكارت ده</p>
+            ${line('الشهر ده', mo)}${line('الإجمالي', all)}
+          </div>`;
+        })()}
         <div style="margin-bottom:10px;">
           <p style="color:var(--muted);font-size:12px;margin:0 0 6px;">اتبعتت بيانات الكارت لـ ${active.length} ${active.length === 1 ? 'شخص' : 'أشخاص'}:</p>
           ${active.length === 0 ? `<p style="color:var(--muted);font-size:12.5px;margin:0;">محدش معاه بيانات الكارت دلوقتي</p>` :
@@ -5053,27 +5313,30 @@ function renderBankCardsTab(){
 }
 
 function openBankCardModal(){
-  ['bc_bank','bc_label','bc_last4','bc_pct','bc_notes'].forEach(id => document.getElementById(id).value = '');
+  ['bc_bank','bc_label','bc_last4','bc_pct','bc_cashback','bc_notes'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('bcFormError').style.display = 'none';
   document.getElementById('bankCardModalBg').classList.add('open');
 }
-function closeBankCardModal(){ document.getElementById('bankCardModalBg').classList.remove('open'); }
+function closeBankCardModal(){ bankCardFromPayment = false; document.getElementById('bankCardModalBg').classList.remove('open'); }
 async function handleBankCardSave(){
   const bank = document.getElementById('bc_bank').value.trim();
   const label = document.getElementById('bc_label').value.trim();
   const last4 = document.getElementById('bc_last4').value.replace(/\D/g,'').slice(-4);
   const pct = parseFloat(document.getElementById('bc_pct').value);
+  const cashbackPct = parseFloat(document.getElementById('bc_cashback').value) || 0;
+  const fromPayment = bankCardFromPayment;
   const notes = document.getElementById('bc_notes').value.trim();
   const err = document.getElementById('bcFormError');
   if(!bank || last4.length !== 4 || isNaN(pct)){
-    err.textContent = 'اكتب اسم البنك وآخر ٤ أرقام (بالظبط ٤) ونسبة العمولة';
+    err.textContent = 'اكتب اسم البنك وآخر ٤ أرقام (بالظبط ٤) ونسبة العمولة (الكاش باك اختياري)';
     err.style.display = 'block';
     return;
   }
-  const c = { id: newId(), bank, label, last4, commissionPct: pct, notes };
+  const c = { id: newId(), bank, label, last4, commissionPct: pct, cashbackPct, notes };
   bankCards.push(c);
   closeBankCardModal(); render();
-  try{ await sbUpsertRow('bank_cards', { id: c.id, bank, label: label || null, last4, commission_pct: pct, notes: notes || null }); showToast('اتضاف الكارت'); }
+  if(fromPayment){ populatePaymentCardSelect(c.id); updatePaymentCardInfo(); }
+  try{ await sbUpsertRow('bank_cards', { id: c.id, bank, label: label || null, last4, commission_pct: pct, cashback_pct: cashbackPct, notes: notes || null }); showToast('اتضاف الكارت'); }
   catch(e){ console.error(e); showToast('حصل خطأ في الحفظ', true); }
 }
 async function deleteBankCard(id){
