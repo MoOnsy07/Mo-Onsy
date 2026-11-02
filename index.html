@@ -564,6 +564,31 @@
   </div>
 </div>
 
+<div class="modal-bg" id="purchModalBg">
+  <div class="modal" style="max-height:90vh;overflow-y:auto;">
+    <h2 id="piTitle">إضافة فاتورة مشتريات</h2>
+    <label>اسم الشركة / المورد</label>
+    <input id="pi_supplier" list="purchSuppliersList" placeholder="مثال: شركة النور للتوريدات" oninput="purchAutoDept()">
+    <datalist id="purchSuppliersList"></datalist>
+    <label>القسم</label>
+    <select id="pi_department" onchange="purchPickDept(this)"></select>
+    <label>رقم الفاتورة (اختياري)</label>
+    <input id="pi_number" placeholder="مثال: 4521">
+    <label>الإجمالي</label>
+    <input id="pi_total" type="number" step="0.01" placeholder="مثال: 3500">
+    <label>تاريخ الفاتورة</label>
+    <input id="pi_date" type="date">
+    <label style="display:flex;align-items:center;gap:8px;margin-top:14px;cursor:pointer;"><input type="checkbox" id="pi_return" style="width:auto;"> يوجد مرتجع في الفاتورة دي</label>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:10px;cursor:pointer;"><input type="checkbox" id="pi_bonus" style="width:auto;" onchange="const t=document.getElementById('pi_total'); if(this.checked){t.value='0';t.disabled=true;}else{t.disabled=false;t.value='';}"> فاتورة بونص (مبلغها 0)</label>
+    <p id="piError" style="color:var(--red);font-size:12.5px;margin:12px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closePurchModal()">إلغاء</button>
+      <button class="btn btn-ghost" id="piSaveMoreBtn" onclick="savePurchInvoice(true)">حفظ وإضافة أخرى</button>
+      <button class="btn btn-primary" onclick="savePurchInvoice(false)">حفظ</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="mallCodingModalBg">
   <div class="modal" style="max-width:560px;max-height:88vh;overflow-y:auto;">
     <h2>إضافة أصناف متكودة جديدة</h2>
@@ -1281,6 +1306,7 @@ async function loadData(){
   await loadInvoices();
   await loadMallInvoices();
   await loadMallCodingItems();
+  await loadPurchInvoices();
   fetchLiveRate();
   render();
 }
@@ -3077,7 +3103,7 @@ function switchTab(tab){
 
 const TAB_LABELS = {
   subs: 'الاشتراكات', payments: 'مدفوعات', profit: 'الربح', services: 'الخدمات',
-  clients: 'العملاء', invoices: 'الفواتير', mall: 'المول', mallcoding: 'تكويد المول', ledger: 'مصاريفي', cards: 'كروت وديون', bankcards: 'كروت الدفع'
+  clients: 'العملاء', invoices: 'الفواتير', mall: 'المول', mallcoding: 'تكويد المول', purchases: 'تقارير المشتريات', ledger: 'مصاريفي', cards: 'كروت وديون', bankcards: 'كروت الدفع'
 };
 
 function toggleSideMenu(){
@@ -3144,6 +3170,12 @@ function render(){
     fab.innerHTML = '+ إضافة أصناف';
     fab.onclick = () => openMallCodingModal();
     html += renderMallCodingTab();
+  } else if(activeTab === 'purchases'){
+    fab.style.display = 'flex';
+    fab.title = 'إضافة فاتورة مشتريات';
+    fab.innerHTML = '+ إضافة فاتورة';
+    fab.onclick = () => openPurchModal();
+    html += renderPurchTab();
   } else if(activeTab === 'ledger'){
     fab.style.display = 'flex';
     fab.title = 'إضافة معاملة';
@@ -4498,6 +4530,399 @@ function renderMallCategoryReport(){
   html += `</div>`;
   return html;
 }
+
+
+
+/* ====== تبويب "تقارير المشتريات": فواتير وأقسام مستقلة تمامًا عن تبويب المول القديم ====== */
+let purchInvoices = [];      // { id, supplier, department, invoiceNumber, total, date, hasReturn, isBonus }
+let purchView = 'list';      // 'list' | 'report'
+let purchMonth = '';
+let purchSearch = '';
+let editingPurchId = null;
+
+async function loadPurchInvoices(){
+  if(!isConfigured()) return;
+  try{
+    const rows = await sbGetAll('purchase_invoices');
+    purchInvoices = rows.map(r => ({ id: r.id, supplier: r.supplier || '', department: r.department || '', invoiceNumber: r.invoice_number || '', total: Number(r.total || 0), date: r.invoice_date || '', hasReturn: !!r.has_return, isBonus: !!r.is_bonus }));
+  }catch(e){
+    console.error('load purchases error', e);
+    showToast('حصل خطأ في تحميل فواتير المشتريات (اتأكدت من تشغيل ملف الـ SQL الجديد؟)', true);
+    purchInvoices = [];
+  }
+}
+const purchToRemote = m => ({ id: m.id, supplier: m.supplier, department: m.department, invoice_number: m.invoiceNumber || null, total: m.total, invoice_date: m.date, has_return: !!m.hasReturn, is_bonus: !!m.isBonus });
+function purchSetView(v){ purchView = v; if(v === 'report' && !mallExecAnchor) mallExecAnchor = toISODateLocal(new Date()); render(); }
+function purchDepartments(){ return [...new Set(purchInvoices.map(m => m.department).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ar')); }
+function purchFillDept(selected){
+  const sel = document.getElementById('pi_department');
+  sel.innerHTML = '<option value="">— اختار القسم —</option>' + purchDepartments().map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('') + '<option value="__new__">➕ قسم جديد...</option>';
+  if(selected && !purchDepartments().includes(selected)){
+    const o = document.createElement('option'); o.value = selected; o.textContent = selected; sel.insertBefore(o, sel.querySelector('option[value="__new__"]'));
+  }
+  sel.value = selected || '';
+}
+function purchPickDept(sel){
+  if(sel.value !== '__new__') return;
+  const v = (window.prompt('اسم القسم الجديد (مثلاً: منظفات)') || '').trim();
+  if(!v){ sel.value = ''; return; }
+  const o = document.createElement('option'); o.value = v; o.textContent = v; sel.insertBefore(o, sel.querySelector('option[value="__new__"]')); sel.value = v;
+}
+// لو الشركة اتسجلت قبل كده، بنختار آخر قسم استخدمته معاها (وتقدر تغيّره)
+function purchAutoDept(){
+  const sup = document.getElementById('pi_supplier').value.trim();
+  const last = purchInvoices.filter(m => m.supplier === sup && m.department).sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+  if(last && !editingPurchId) purchFillDept(last.department);
+}
+function openPurchModal(id){
+  const m = id ? purchInvoices.find(x => x.id === id) : null;
+  editingPurchId = m ? m.id : null;
+  document.getElementById('piTitle').textContent = m ? 'تعديل فاتورة مشتريات' : 'إضافة فاتورة مشتريات';
+  document.getElementById('piSaveMoreBtn').style.display = m ? 'none' : '';
+  document.getElementById('purchSuppliersList').innerHTML = [...new Set(purchInvoices.map(x => x.supplier).filter(Boolean))].map(v => `<option value="${escapeHtml(v)}">`).join('');
+  document.getElementById('pi_supplier').value = m ? m.supplier : '';
+  purchFillDept(m ? m.department : '');
+  document.getElementById('pi_number').value = m ? m.invoiceNumber : '';
+  document.getElementById('pi_total').value = m ? m.total : '';
+  document.getElementById('pi_total').disabled = !!(m && m.isBonus);
+  document.getElementById('pi_date').value = m ? m.date : toISODateLocal(new Date());
+  document.getElementById('pi_return').checked = !!(m && m.hasReturn);
+  document.getElementById('pi_bonus').checked = !!(m && m.isBonus);
+  document.getElementById('piError').style.display = 'none';
+  document.getElementById('purchModalBg').classList.add('open');
+}
+function closePurchModal(){ editingPurchId = null; document.getElementById('purchModalBg').classList.remove('open'); }
+async function savePurchInvoice(another){
+  const err = document.getElementById('piError');
+  const showErr = t => { err.textContent = t; err.style.display = 'block'; };
+  const supplier = document.getElementById('pi_supplier').value.trim();
+  const department = document.getElementById('pi_department').value;
+  const invoiceNumber = document.getElementById('pi_number').value.trim();
+  const isBonus = document.getElementById('pi_bonus').checked;
+  const total = isBonus ? 0 : (parseFloat(document.getElementById('pi_total').value) || 0);
+  const date = document.getElementById('pi_date').value;
+  const hasReturn = document.getElementById('pi_return').checked;
+  if(!supplier){ showErr('اكتب اسم الشركة'); return; }
+  if(!department || department === '__new__'){ showErr('اختار القسم'); return; }
+  if(!isBonus && !total){ showErr('اكتب إجمالي الفاتورة'); return; }
+  if(!date){ showErr('اختار تاريخ الفاتورة'); return; }
+  if(invoiceNumber && purchInvoices.some(m => m.id !== editingPurchId && m.supplier === supplier && m.department === department && (m.invoiceNumber || '').toLowerCase() === invoiceNumber.toLowerCase())){
+    showErr('الفاتورة دي متسجلة قبل كده لنفس الشركة ونفس القسم'); return;
+  }
+  err.style.display = 'none';
+  let m = editingPurchId ? purchInvoices.find(x => x.id === editingPurchId) : null;
+  if(m) Object.assign(m, { supplier, department, invoiceNumber, total, date, hasReturn, isBonus });
+  else { m = { id: newId(), supplier, department, invoiceNumber, total, date, hasReturn, isBonus }; purchInvoices.push(m); }
+  const wasEdit = !!editingPurchId;
+  if(!another) closePurchModal();
+  else {
+    document.getElementById('pi_number').value = ''; document.getElementById('pi_total').value = '';
+    document.getElementById('pi_total').disabled = false; document.getElementById('pi_return').checked = false; document.getElementById('pi_bonus').checked = false;
+    document.getElementById('pi_total').focus();
+  }
+  purchMonth = date.slice(0, 7);
+  render();
+  try{ await sbUpsertRow('purchase_invoices', purchToRemote(m)); showToast(wasEdit ? 'اتعدّلت الفاتورة' : 'اتسجلت الفاتورة ✓'); }
+  catch(e){ console.error(e); showToast('اتسجلت في الصفحة بس، حصل خطأ في الحفظ (اتأكدت من تشغيل ملف الـ SQL؟)', true); }
+}
+async function deletePurchInvoice(id){
+  if(!confirm('تحذف الفاتورة دي؟')) return;
+  purchInvoices = purchInvoices.filter(m => m.id !== id);
+  render();
+  try{ await sbDeleteRow('purchase_invoices', id); }catch(e){ console.error(e); showToast('حصل خطأ في الحذف من الداتا بيز', true); }
+}
+
+function renderPurchList(){
+  const months = [...new Set(purchInvoices.map(m => (m.date || '').slice(0, 7)).filter(Boolean))].sort().reverse();
+  if(purchMonth !== 'all' && !months.includes(purchMonth)) purchMonth = months[0] || '';
+  const q = purchSearch.trim().toLowerCase();
+  const list = purchInvoices.filter(m => (purchMonth === 'all' || (m.date || '').slice(0, 7) === purchMonth) && (!q || (m.supplier || '').toLowerCase().includes(q) || (m.department || '').toLowerCase().includes(q)))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const total = list.reduce((a, m) => a + m.total, 0);
+  let html = `<p class="sub">فواتير مشتريات المول بالأقسام، مستقلة عن تبويب المول</p>
+    <div class="no-print" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+      <button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="purchSetView('report')">📈 التقرير التنفيذي</button>
+    </div>`;
+  if(purchInvoices.length === 0) return html + `<div class="empty">لسه مفيش فواتير. دوس "+ إضافة فاتورة" وابدأ بأول شركة.</div>`;
+  html += `<div class="month-pills no-print">${months.map(mo => `<button class="month-pill ${purchMonth === mo ? 'active' : ''}" onclick="purchMonth='${mo}';render();">${monthLabel(mo)}</button>`).join('')}<button class="month-pill ${purchMonth === 'all' ? 'active' : ''}" onclick="purchMonth='all';render();">الكل</button></div>
+    <div class="no-print" style="margin:12px 0;"><input value="${escapeHtml(purchSearch)}" placeholder="🔍 دور باسم الشركة أو القسم" onchange="purchSearch=this.value;render();"></div>
+    <div class="cards" style="margin-bottom:18px;">
+      <div class="card" style="cursor:default;"><p class="client" style="margin-bottom:6px;">عدد الفواتير</p><p class="store" style="font-size:22px;">${list.length}</p></div>
+      <div class="card" style="cursor:default;border-color:var(--mint);"><p class="client" style="margin-bottom:6px;">الإجمالي</p><p class="store" style="font-size:22px;color:var(--mint);">${moneyHtml(total)}</p></div>
+    </div>`;
+  if(!list.length) return html + `<div class="empty">مفيش فواتير مطابقة.</div>`;
+  html += `<div style="overflow-x:auto;"><table style="width:100%;text-align:center;"><thead><tr><th>التاريخ</th><th>الشركة</th><th>القسم</th><th>رقم الفاتورة</th><th>الإجمالي</th><th>ملاحظات</th><th></th></tr></thead><tbody>
+    ${list.map(m => `<tr><td>${fmtDMY(m.date)}</td><td style="text-align:right;">${escapeHtml(m.supplier)}</td><td>${escapeHtml(m.department)}</td><td>${escapeHtml(m.invoiceNumber || '—')}</td><td>${m.total.money()}</td>
+      <td>${m.hasReturn ? '<span style="color:var(--red);">مرتجع</span> ' : ''}${m.isBonus ? 'بونص' : ''}${!m.hasReturn && !m.isBonus ? '—' : ''}</td>
+      <td style="white-space:nowrap;"><button class="icon-btn" onclick="openPurchModal('${m.id}')" title="تعديل">✏️</button> <button class="icon-btn" onclick="deletePurchInvoice('${m.id}')" title="حذف">🗑</button></td></tr>`).join('')}
+    </tbody></table></div>`;
+  return html;
+}
+function renderPurchTab(){ return purchView === 'report' ? renderPurchReport() : renderPurchList(); }
+/* ====== التقرير التنفيذي للمشتريات (أسبوعي / شهري / فترة) بالرسوم البيانية ====== */
+let mallExecPeriod = 'week';
+let mallExecAnchor = '';
+let mallExecFrom = '';
+let mallExecTo = '';
+const EXEC_COLORS = ['#2DD4BF', '#F5A524', '#6C8CFF', '#F0576B', '#B084F5', '#7BD389', '#FF8FB1', '#5CC8FF', '#C9A66B', '#9AA5B1'];
+const isoToDate = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
+const addDaysD = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const dmyD = d => `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+
+function execRange(){
+  const a = isoToDate(mallExecAnchor || toISODateLocal(new Date()));
+  let start, end, pStart, pEnd, kind;
+  if(mallExecPeriod === 'month'){
+    start = new Date(a.getFullYear(), a.getMonth(), 1); end = new Date(a.getFullYear(), a.getMonth() + 1, 0);
+    pStart = new Date(a.getFullYear(), a.getMonth() - 1, 1); pEnd = new Date(a.getFullYear(), a.getMonth(), 0);
+    kind = 'الشهري';
+  } else if(mallExecPeriod === 'custom'){
+    const f = mallExecFrom ? isoToDate(mallExecFrom) : addDaysD(new Date(), -29);
+    const t = mallExecTo ? isoToDate(mallExecTo) : new Date();
+    start = f <= t ? f : t; end = f <= t ? t : f;
+    const len = Math.round((end - start) / 86400000) + 1;
+    pEnd = addDaysD(start, -1); pStart = addDaysD(pEnd, -(len - 1));
+    kind = 'لفترة محددة';
+  } else { // الأسبوع من السبت للجمعة
+    start = addDaysD(a, -((a.getDay() + 1) % 7)); end = addDaysD(start, 6);
+    pStart = addDaysD(start, -7); pEnd = addDaysD(start, -1);
+    kind = 'الأسبوعي';
+  }
+  return { start, end, pStart, pEnd, kind, s: toISODateLocal(start), e: toISODateLocal(end), ps: toISODateLocal(pStart), pe: toISODateLocal(pEnd) };
+}
+function execShift(dir){
+  const a = isoToDate(mallExecAnchor || toISODateLocal(new Date()));
+  mallExecAnchor = toISODateLocal(mallExecPeriod === 'month' ? new Date(a.getFullYear(), a.getMonth() + dir, 1) : addDaysD(a, 7 * dir));
+  render();
+}
+function execAgg(fromISO, toISO){
+  const inv = purchInvoices.filter(m => m.date && m.date >= fromISO && m.date <= toISO);
+  const r = { inv, total: 0, count: inv.length, returns: 0, bonus: 0, cats: {}, sups: {}, days: {} };
+  inv.forEach(m => {
+    const t = m.total || 0;
+    const sup = m.supplier || 'بدون اسم';
+    const cat = (m.department || 'غير مصنّف');
+    r.total += t; if(m.hasReturn) r.returns++; if(m.isBonus) r.bonus++;
+    const c = r.cats[cat] || (r.cats[cat] = { name: cat, total: 0, count: 0, sups: {} });
+    c.total += t; c.count++; c.sups[sup] = (c.sups[sup] || 0) + t;
+    const sp = r.sups[sup] || (r.sups[sup] = { name: sup, total: 0, count: 0, returns: 0 });
+    sp.total += t; sp.count++; if(m.hasReturn) sp.returns++;
+    r.days[m.date] = (r.days[m.date] || 0) + t;
+  });
+  return r;
+}
+const execPct = (cur, prev) => prev > 0 ? (cur - prev) / prev * 100 : null;
+const execDelta = (cur, prev) => {
+  const d = execPct(cur, prev);
+  if(d === null) return `<span style="color:var(--muted);">لا توجد فترة سابقة للمقارنة</span>`;
+  const up = d > 0.05, dn = d < -0.05;
+  return `<span style="color:${up ? 'var(--amber)' : dn ? 'var(--mint)' : 'var(--muted)'};font-weight:700;">${up ? '▲' : dn ? '▼' : '■'} ${Math.abs(d).toFixed(1)}%</span> <span style="color:var(--muted);">عن الفترة السابقة</span>`;
+};
+const execMoney = n => Math.round(n || 0).toLocaleString('en-US');
+
+function svgDonut(items, total){
+  const R = 70, C = 2 * Math.PI * R;
+  let off = 0, segs = '';
+  items.forEach(it => {
+    const len = total ? it.value / total * C : 0;
+    segs += `<circle cx="100" cy="100" r="${R}" fill="none" stroke="${it.color}" stroke-width="34" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 100 100)"/>`;
+    off += len;
+  });
+  return `<svg viewBox="0 0 200 200" style="direction:ltr;width:100%;max-width:230px;" role="img" aria-label="توزيع المشتريات على الأقسام">
+    ${segs}
+    <text x="100" y="96" text-anchor="middle" font-size="15" font-weight="700" fill="currentColor">${execMoney(total)}</text>
+    <text x="100" y="114" text-anchor="middle" font-size="10" fill="currentColor" opacity=".65">ج.م</text></svg>`;
+}
+function svgHBars(rows, opts = {}){
+  const W = 640, rowH = opts.prev ? 44 : 30, left = 90, labelW = 150;
+  const barMax = W - labelW - left;
+  const max = Math.max(1, ...rows.map(r => Math.max(r.cur, r.prev || 0)));
+  const H = rows.length * rowH + 6;
+  let g = '';
+  rows.forEach((r, i) => {
+    const y = i * rowH + 4, w = Math.max(1, r.cur / max * barMax), x = W - labelW - w;
+    g += `<text x="${W - 4}" y="${y + 15}" text-anchor="end" font-size="12.5" fill="currentColor">${escapeHtml(String(r.label).slice(0, 22))}</text>`;
+    g += `<rect x="${x.toFixed(1)}" y="${y + 3}" width="${w.toFixed(1)}" height="14" rx="3" fill="${r.color}"/>`;
+    g += `<text x="${(x - 6).toFixed(1)}" y="${y + 15}" text-anchor="end" font-size="11.5" font-weight="700" fill="currentColor">${execMoney(r.cur)}</text>`;
+    if(opts.prev){
+      const pw = Math.max(1, (r.prev || 0) / max * barMax), px = W - labelW - pw;
+      g += `<rect x="${px.toFixed(1)}" y="${y + 21}" width="${pw.toFixed(1)}" height="9" rx="3" fill="#9AA5B1" opacity=".55"/>`;
+      g += `<text x="${(px - 6).toFixed(1)}" y="${y + 30}" text-anchor="end" font-size="10" fill="currentColor" opacity=".65">${execMoney(r.prev || 0)}</text>`;
+    }
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" style="direction:ltr;width:100%;" role="img">${g}</svg>`;
+}
+function svgTrend(points){
+  const W = 640, H = 230, pl = 52, pr = 14, pt = 18, pb = 34;
+  const max = Math.max(1, ...points.map(p => p.value));
+  const n = points.length, iw = W - pl - pr, ih = H - pt - pb;
+  const X = i => pl + (n === 1 ? iw / 2 : i * iw / (n - 1));
+  const Y = v => pt + ih - v / max * ih;
+  let g = '';
+  for(let k = 0; k <= 3; k++){
+    const v = max * k / 3, y = Y(v);
+    g += `<line x1="${pl}" x2="${W - pr}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" stroke="currentColor" opacity=".15"/>`;
+    g += `<text x="${pl - 6}" y="${(y + 4).toFixed(1)}" text-anchor="end" font-size="10" fill="currentColor" opacity=".65">${execMoney(v)}</text>`;
+  }
+  const line = points.map((p, i) => `${X(i).toFixed(1)},${Y(p.value).toFixed(1)}`).join(' ');
+  g += `<polygon points="${X(0).toFixed(1)},${Y(0)} ${line} ${X(n - 1).toFixed(1)},${Y(0)}" fill="#2DD4BF" opacity=".18"/>`;
+  g += `<polyline points="${line}" fill="none" stroke="#2DD4BF" stroke-width="2.5" stroke-linejoin="round"/>`;
+  const step = Math.ceil(n / 10);
+  const peak = points.reduce((b, p, i) => p.value > points[b].value ? i : b, 0);
+  points.forEach((p, i) => {
+    g += `<circle cx="${X(i).toFixed(1)}" cy="${Y(p.value).toFixed(1)}" r="${i === peak ? 5 : 3}" fill="${i === peak ? '#F5A524' : '#2DD4BF'}"/>`;
+    if(i % step === 0 || i === n - 1) g += `<text x="${X(i).toFixed(1)}" y="${H - 12}" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7">${p.label}</text>`;
+  });
+  if(points[peak].value > 0) g += `<text x="${X(peak).toFixed(1)}" y="${(Y(points[peak].value) - 9).toFixed(1)}" text-anchor="middle" font-size="10.5" font-weight="700" fill="currentColor">${execMoney(points[peak].value)}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" style="direction:ltr;width:100%;" role="img">${g}</svg>`;
+}
+
+function execInsights(cur, prev, cats, R){
+  const out = [];
+  const d = execPct(cur.total, prev.total);
+  if(d !== null) out.push(`إجمالي المشتريات <b>${execMoney(cur.total)} ج.م</b>، ${d >= 0 ? 'بزيادة' : 'بانخفاض'} <b>${Math.abs(d).toFixed(1)}%</b> عن الفترة السابقة (${execMoney(prev.total)} ج.م).`);
+  else out.push(`إجمالي المشتريات <b>${execMoney(cur.total)} ج.م</b> على ${cur.count} فاتورة.`);
+  if(cats.length){
+    const top = cats[0];
+    out.push(`أكبر الأقسام <b>${escapeHtml(top.name)}</b> بنسبة <b>${(top.total / (cur.total || 1) * 100).toFixed(1)}%</b> من الإجمالي (${execMoney(top.total)} ج.م).`);
+    const moves = cats.map(c => ({ c, pv: (prev.cats[c.name] || {}).total || 0 })).filter(x => x.pv > 0)
+      .map(x => ({ ...x, pct: (x.c.total - x.pv) / x.pv * 100, diff: x.c.total - x.pv })).filter(x => Math.abs(x.pct) >= 20 && Math.abs(x.diff) >= 0.03 * (cur.total || 1));
+    moves.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)).slice(0, 2).forEach(x =>
+      out.push(`قسم <b>${escapeHtml(x.c.name)}</b> ${x.pct > 0 ? 'زاد' : 'انخفض'} <b>${Math.abs(x.pct).toFixed(0)}%</b> عن الفترة السابقة (${x.diff > 0 ? '+' : '−'}${execMoney(Math.abs(x.diff))} ج.م).`));
+    cats.forEach(c => {
+      if(c.total < 0.1 * (cur.total || 1)) return;
+      const [sn, sv] = Object.entries(c.sups).sort((a, b) => b[1] - a[1])[0];
+      if(Object.keys(c.sups).length > 1 && sv / (c.total || 1) >= 0.6) out.push(`مورد <b>${escapeHtml(sn)}</b> يمثّل <b>${(sv / c.total * 100).toFixed(0)}%</b> من مشتريات قسم ${escapeHtml(c.name)}، فيه اعتماد كبير على مورد واحد.`);
+    });
+  }
+  const dayEntries = Object.entries(cur.days).sort((a, b) => b[1] - a[1]);
+  if(dayEntries.length) out.push(`أعلى يوم شراء كان <b>${dmyD(isoToDate(dayEntries[0][0]))}</b> بقيمة ${execMoney(dayEntries[0][1])} ج.م.`);
+  if(cur.returns){
+    const worst = Object.values(cur.sups).sort((a, b) => b.returns - a.returns)[0];
+    out.push(`<b>${cur.returns}</b> فاتورة فيها مرتجع (${(cur.returns / cur.count * 100).toFixed(1)}% من الفواتير)، أكثرها من <b>${escapeHtml(worst.name)}</b> (${worst.returns}).`);
+  }
+  const un = cur.cats['غير مصنّف'];
+  if(un && un.total > 0) out.push(`<span style="color:var(--amber);">⚠ فواتير بقيمة ${execMoney(un.total)} ج.م من غير قسم، اختار لها قسم عشان التقرير يبقى دقيق.</span>`);
+  return out;
+}
+
+function renderPurchReport(){
+  const R = execRange();
+  const cur = execAgg(R.s, R.e), prev = execAgg(R.ps, R.pe);
+  const cats = Object.values(cur.cats).sort((a, b) => b.total - a.total);
+  const colorOf = {}; cats.forEach((c, i) => colorOf[c.name] = EXEC_COLORS[i % EXEC_COLORS.length]);
+  const company = (() => { try{ return localStorage.getItem('mallExecCompany') || ''; }catch(e){ return ''; } })();
+  const supCount = Object.keys(cur.sups).length;
+  const avg = cur.count ? cur.total / cur.count : 0;
+  const prevAvg = prev.count ? prev.total / prev.count : 0;
+
+  // المنحنى الزمني: يومي لو المدة ≤ 35 يوم، وإلا أسبوعي
+  const span = Math.round((R.end - R.start) / 86400000) + 1;
+  const points = [];
+  if(span <= 35){
+    for(let i = 0; i < span; i++){ const d = addDaysD(R.start, i), iso = toISODateLocal(d); points.push({ label: `${d.getDate()}/${d.getMonth() + 1}`, value: cur.days[iso] || 0 }); }
+  } else {
+    for(let i = 0; i < span; i += 7){
+      let v = 0; for(let k = i; k < Math.min(i + 7, span); k++) v += cur.days[toISODateLocal(addDaysD(R.start, k))] || 0;
+      const d = addDaysD(R.start, i); points.push({ label: `${d.getDate()}/${d.getMonth() + 1}`, value: v });
+    }
+  }
+
+  const tile = (title, val, sub, border) => `<div class="card" style="cursor:default;${border ? 'border-color:' + border + ';' : ''}">
+      <p class="client" style="margin-bottom:6px;">${title}</p>
+      <p class="store" style="font-size:22px;${border ? 'color:' + border + ';' : ''}">${val}</p>
+      <p style="margin:6px 0 0;font-size:11.5px;">${sub}</p></div>`;
+  const periodBtn = (k, t) => `<button class="month-pill ${mallExecPeriod === k ? 'active' : ''}" onclick="mallExecPeriod='${k}';render();">${t}</button>`;
+  const titleDates = `${dmyD(R.start)} — ${dmyD(R.end)}`;
+
+  let html = `<p class="sub">التقرير التنفيذي للمشتريات</p>
+    <div class="no-print" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+      <button class="btn btn-ghost" style="flex:none;padding:8px 16px;" onclick="purchSetView('list')">↩ الفواتير</button>
+      <button class="btn btn-primary" style="flex:none;padding:8px 16px;" onclick="window.print()">🖨 طباعة / PDF</button>
+    </div>
+    <div class="month-pills no-print">${periodBtn('week', 'أسبوعي')}${periodBtn('month', 'شهري')}${periodBtn('custom', 'فترة محددة')}</div>
+    <div class="no-print" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin:12px 0 16px;">
+      ${mallExecPeriod === 'custom'
+        ? `<div style="flex:1;min-width:140px;"><label style="margin-top:0;">من</label><input type="date" value="${mallExecFrom || R.s}" onchange="mallExecFrom=this.value;render();"></div>
+           <div style="flex:1;min-width:140px;"><label style="margin-top:0;">إلى</label><input type="date" value="${mallExecTo || R.e}" onchange="mallExecTo=this.value;render();"></div>`
+        : `<button class="btn btn-ghost" style="flex:none;padding:8px 14px;" onclick="execShift(-1)">▶ السابق</button>
+           <span style="padding:8px 4px;font-weight:700;">${titleDates}</span>
+           <button class="btn btn-ghost" style="flex:none;padding:8px 14px;" onclick="execShift(1)">التالي ◀</button>`}
+      <div style="flex:1;min-width:200px;"><label style="margin-top:0;">اسم الشركة (بيظهر أول التقرير)</label>
+        <input value="${escapeHtml(company)}" placeholder="اسم الشركة / المول" onchange="try{localStorage.setItem('mallExecCompany', this.value.trim())}catch(e){} render();"></div>
+    </div>`;
+
+  html += `<div class="print-area" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px 20px;">
+    <div style="text-align:center;margin-bottom:18px;">
+      ${company ? `<h2 style="margin:0 0 4px;font-size:22px;">${escapeHtml(company)}</h2>` : ''}
+      <p style="margin:0 0 3px;font-size:16px;font-weight:700;">تقرير المشتريات ${R.kind}</p>
+      <p style="margin:0;font-size:13px;opacity:.75;">عن الفترة من ${dmyD(R.start)} إلى ${dmyD(R.end)} &middot; مقارنة بالفترة من ${dmyD(R.pStart)} إلى ${dmyD(R.pEnd)}</p>
+    </div>`;
+
+  if(cur.count === 0){
+    html += `<div class="empty">مفيش فواتير مسجّلة في الفترة دي.</div>`;
+  } else {
+    html += `<div class="cards" style="margin-bottom:20px;">
+      ${tile('إجمالي المشتريات', `${execMoney(cur.total)} <span style="font-size:.6em;">ج.م</span>`, execDelta(cur.total, prev.total), 'var(--mint)')}
+      ${tile('عدد الفواتير', cur.count, execDelta(cur.count, prev.count))}
+      ${tile('عدد الموردين', supCount, `متوسط الفاتورة ${execMoney(avg)} ج.م`)}
+      ${tile('فواتير فيها مرتجع', cur.returns, cur.count ? (cur.returns / cur.count * 100).toFixed(1) + '% من الفواتير' : '')}
+    </div>`;
+
+    html += `<div class="section-title">أهم الملاحظات</div>
+      <ul style="margin:0 0 22px;padding:0 20px 0 0;line-height:2;font-size:14px;">${execInsights(cur, prev, cats, R).map(t => `<li>${t}</li>`).join('')}</ul>`;
+
+    const donutItems = cats.map(c => ({ name: c.name, value: c.total, color: colorOf[c.name] }));
+    html += `<div class="section-title">توزيع المشتريات على الأقسام</div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center;justify-content:center;margin-bottom:22px;">
+        <div style="flex:none;width:230px;">${svgDonut(donutItems, cur.total)}</div>
+        <div style="flex:1;min-width:230px;">${donutItems.map(it => `<div style="display:flex;align-items:center;gap:8px;margin:6px 0;font-size:13.5px;">
+          <span style="width:12px;height:12px;border-radius:3px;background:${it.color};flex:none;"></span>
+          <span style="flex:1;">${escapeHtml(it.name)}</span>
+          <b>${(it.value / (cur.total || 1) * 100).toFixed(1)}%</b>
+          <span style="opacity:.7;min-width:78px;text-align:left;">${execMoney(it.value)}</span></div>`).join('')}</div>
+      </div>`;
+
+    html += `<div class="section-title">مقارنة الأقسام بالفترة السابقة</div>
+      <p style="margin:0 0 6px;font-size:12px;opacity:.7;">الشريط الملوّن للفترة الحالية، والرمادي للفترة السابقة.</p>
+      <div style="margin-bottom:22px;">${svgHBars(cats.map(c => ({ label: c.name, cur: c.total, prev: (prev.cats[c.name] || {}).total || 0, color: colorOf[c.name] })), { prev: true })}</div>`;
+
+    html += `<div class="section-title">${span <= 35 ? 'المشتريات يوم بيوم' : 'المشتريات أسبوع بأسبوع'}</div>
+      <div style="margin-bottom:22px;">${svgTrend(points)}</div>`;
+
+    const topSup = Object.values(cur.sups).sort((a, b) => b.total - a.total).slice(0, 8);
+    html += `<div class="section-title">أعلى الموردين</div>
+      <div style="margin-bottom:22px;">${svgHBars(topSup.map((x, i) => ({ label: x.name, cur: x.total, color: '#6C8CFF' })))}</div>`;
+
+    html += `<div class="section-title">تفصيل الأقسام</div>
+      <div style="overflow-x:auto;"><table style="width:100%;text-align:center;"><thead><tr><th>القسم</th><th>الإجمالي</th><th>النسبة</th><th>الفواتير</th><th>الفترة السابقة</th><th>التغيّر</th><th>أكبر مورد</th></tr></thead><tbody>
+      ${cats.map(c => {
+        const pv = (prev.cats[c.name] || {}).total || 0, d = execPct(c.total, pv);
+        const [sn, sv] = Object.entries(c.sups).sort((a, b) => b[1] - a[1])[0];
+        return `<tr><td style="text-align:right;"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${colorOf[c.name]};margin-left:6px;"></span>${escapeHtml(c.name)}</td>
+          <td>${execMoney(c.total)}</td><td>${(c.total / (cur.total || 1) * 100).toFixed(1)}%</td><td>${c.count}</td><td>${execMoney(pv)}</td>
+          <td>${d === null ? '—' : (d > 0 ? '▲ ' : d < 0 ? '▼ ' : '') + Math.abs(d).toFixed(1) + '%'}</td><td>${escapeHtml(sn)} (${(sv / (c.total || 1) * 100).toFixed(0)}%)</td></tr>`;
+      }).join('')}
+      <tr style="font-weight:700;"><td>الإجمالي</td><td>${execMoney(cur.total)}</td><td>100%</td><td>${cur.count}</td><td>${execMoney(prev.total)}</td><td>${(() => { const d = execPct(cur.total, prev.total); return d === null ? '—' : (d > 0 ? '▲ ' : d < 0 ? '▼ ' : '') + Math.abs(d).toFixed(1) + '%'; })()}</td><td></td></tr>
+      </tbody></table></div>`;
+
+    if(cur.returns || cur.bonus){
+      const rs = Object.values(cur.sups).filter(x => x.returns).sort((a, b) => b.returns - a.returns);
+      html += `<div class="section-title" style="margin-top:22px;">المرتجعات والبونص</div>
+        <p style="margin:0 0 8px;font-size:13.5px;">فواتير بونص: <b>${cur.bonus}</b> &middot; فواتير فيها مرتجع: <b>${cur.returns}</b></p>
+        ${rs.length ? `<table style="width:100%;text-align:center;"><thead><tr><th>المورد</th><th>فواتير فيها مرتجع</th><th>من إجمالي فواتيره</th></tr></thead><tbody>
+        ${rs.map(x => `<tr><td style="text-align:right;">${escapeHtml(x.name)}</td><td>${x.returns}</td><td>${(x.returns / x.count * 100).toFixed(0)}%</td></tr>`).join('')}</tbody></table>` : ''}`;
+    }
+  }
+
+  const sig = t => `<div style="flex:1;min-width:200px;text-align:center;"><p style="font-weight:700;margin:0 0 46px;">${t}</p>
+      <p style="margin:0 0 10px;">الاسم: ............................................</p><p style="margin:0;">التوقيع: ..........................................</p></div>`;
+  html += `<div style="display:flex;gap:30px;flex-wrap:wrap;justify-content:space-between;margin-top:48px;">${sig('أخصائي المشتريات')}${sig('اعتماد الإدارة')}</div>
+    <p style="text-align:center;margin:22px 0 0;font-size:11.5px;opacity:.6;">تاريخ إصدار التقرير: ${dmyD(new Date())}</p>
+  </div>`;
+  return html;
+}
+
 
 function renderMallTab(){
   if(mallRaceMode){
