@@ -265,6 +265,7 @@
     table{ width:100%; border-collapse:collapse; }
     th,td{ border:1px solid #999; padding:6px 8px; }
   }
+.store, .amount, td, .result-line span{ font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -784,6 +785,11 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
+// تنسيق الأرقام للعرض: فواصل آلاف + كسرين (703,693.00)، للعرض بس مش للقيم اللي بتتحفظ
+Number.prototype.money = function(d = 2){
+  return this.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+};
+const moneyHtml = (n, unit = 'ج.م') => `<span dir="ltr" style="unicode-bidi:isolate;">${Number(n).money()}</span>${unit ? ` <span style="font-size:.6em;font-weight:600;color:var(--muted);">${unit}</span>` : ''}`;
 let subs = [];
 let payments = [];
 let transactions = [];
@@ -1177,7 +1183,7 @@ function egpEquivalent(usdAmount){
 function egpEquivalentHtml(usdAmount){
   const eq = egpEquivalent(usdAmount);
   if(eq === null) return '';
-  return `<span style="color:var(--muted);font-size:12px;">(≈ ${eq.toFixed(2)} ج.م)</span>`;
+  return `<span style="color:var(--muted);font-size:12px;">(≈ ${eq.money()} ج.م)</span>`;
 }
 
 /* بيحول أي مبلغ اشتراك (دولار أو جنيه) لمكافئه بالدولار، عشان نقدر نجمع إجمالي موحّد */
@@ -1194,9 +1200,9 @@ function subAmountHtml(sub){
   const amount = sub.amount || 0;
   if((sub.currency || 'USD') === 'EGP'){
     const usdEq = liveUsdRate ? (amount / liveUsdRate) : null;
-    return `${amount.toFixed(2)} ج.م ${usdEq !== null ? `<span style="color:var(--muted);font-size:12px;">(≈ $${usdEq.toFixed(2)})</span>` : ''}`;
+    return `${amount.money()} ج.م ${usdEq !== null ? `<span style="color:var(--muted);font-size:12px;">(≈ $${usdEq.money()})</span>` : ''}`;
   }
-  return `$${amount.toFixed(2)} ${egpEquivalentHtml(amount)}`;
+  return `$${amount.money()} ${egpEquivalentHtml(amount)}`;
 }
 
 /* ====== خزنة بيانات الدخول (تشفير محلي بالكامل، الباسورد مايتخزنش خالص) ====== */
@@ -1685,8 +1691,8 @@ function renderMallCodingTab(){
       <p style="text-align:center;margin:0 0 18px;font-size:13px;color:var(--muted);">التاريخ: ${dateText}</p>
       <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;text-align:center;">
         <thead><tr><th style="width:44px;">م</th><th>اسم الصنف</th><th>الباركود</th><th>قيمة التكويد</th><th class="no-print" style="width:44px;"></th></tr></thead>
-        <tbody>${list.map((i, idx) => `<tr><td>${idx + 1}</td><td>${escapeHtml(i.name)}</td><td dir="ltr">${escapeHtml(i.barcode)}</td><td>${i.fee.toFixed(2)} ج.م</td><td class="no-print"><button class="icon-btn" onclick="deleteMallCodingItem('${i.id}')" title="حذف">🗑</button></td></tr>`).join('')}</tbody>
-        <tfoot><tr><td colspan="3" style="font-weight:700;">الإجمالي (${list.length} صنف)</td><td style="font-weight:700;">${total.toFixed(2)} ج.م</td><td class="no-print"></td></tr></tfoot>
+        <tbody>${list.map((i, idx) => `<tr><td>${idx + 1}</td><td>${escapeHtml(i.name)}</td><td dir="ltr">${escapeHtml(i.barcode)}</td><td>${i.fee.money()} ج.م</td><td class="no-print"><button class="icon-btn" onclick="deleteMallCodingItem('${i.id}')" title="حذف">🗑</button></td></tr>`).join('')}</tbody>
+        <tfoot><tr><td colspan="3" style="font-weight:700;">الإجمالي (${list.length} صنف)</td><td style="font-weight:700;">${total.money()} ج.م</td><td class="no-print"></td></tr></tfoot>
       </table></div>
       <div style="display:flex;gap:30px;flex-wrap:wrap;justify-content:space-between;margin-top:48px;">
         ${sigLine('أخصائي المشتريات')}${sigLine('مندوب الشركة')}
@@ -2130,8 +2136,8 @@ async function updatePaymentCardInfo(){
   const egp = await costToEgp(cost, document.getElementById('p_costCurrency').value);
   if(seq !== paymentCardInfoSeq) return;
   if(egp === null){ el.textContent = 'اتعذر جلب سعر الصرف لحساب العمولة'; return; }
-  el.innerHTML = `عمولة الكارت (${card.commissionPct}%): <b>${round2(egp * card.commissionPct / 100).toFixed(2)} ج.م</b>`
-    + `<br>كاش باك متوقع (${card.cashbackPct}%): <b>${round2(egp * card.cashbackPct / 100).toFixed(2)} ج.م</b>`;
+  el.innerHTML = `عمولة الكارت (${card.commissionPct}%): <b>${round2(egp * card.commissionPct / 100).money()} ج.م</b>`
+    + `<br>كاش باك متوقع (${card.cashbackPct}%): <b>${round2(egp * card.cashbackPct / 100).money()} ج.م</b>`;
 }
 function closePaymentModal(){
   document.getElementById('paymentModalBg').classList.remove('open');
@@ -3047,18 +3053,18 @@ function calcResultHtml(){
   if(!calcResult) return '';
   if(calcResult.type === 'egp'){
     return `<div class="result-box">
-      <div class="result-line"><span>المبلغ الأصلي</span><span>${calcResult.original.toFixed(2)} ج.م</span></div>
-      <div class="result-line"><span>نسبة البنك (٣٪)</span><span>+ ${calcResult.bankFee.toFixed(2)} ج.م</span></div>
-      <div class="result-line"><span>نسبة الربح (٧٪)</span><span>+ ${calcResult.profit.toFixed(2)} ج.م</span></div>
-      <div class="result-line total"><span>الإجمالي المطلوب من العميل</span><span>${calcResult.total.toFixed(2)} ج.م</span></div>
+      <div class="result-line"><span>المبلغ الأصلي</span><span>${calcResult.original.money()} ج.م</span></div>
+      <div class="result-line"><span>نسبة البنك (٣٪)</span><span>+ ${calcResult.bankFee.money()} ج.م</span></div>
+      <div class="result-line"><span>نسبة الربح (٧٪)</span><span>+ ${calcResult.profit.money()} ج.م</span></div>
+      <div class="result-line total"><span>الإجمالي المطلوب من العميل</span><span>${calcResult.total.money()} ج.م</span></div>
     </div>`;
   }
   return `<div class="result-box">
-    <div class="result-line"><span>المبلغ الأصلي</span><span>${calcResult.original.toFixed(2)} ${calcResult.currency}</span></div>
-    <div class="result-line"><span>سعر الصرف المستخدم</span><span>${calcResult.rate.toFixed(2)} ج.م</span></div>
-    <div class="result-line"><span>المبلغ بالجنيه</span><span>${calcResult.converted.toFixed(2)} ج.م</span></div>
-    <div class="result-line"><span>نسبة الربح (١٠٪)</span><span>+ ${calcResult.profit.toFixed(2)} ج.م</span></div>
-    <div class="result-line total"><span>الإجمالي المطلوب من العميل</span><span>${calcResult.total.toFixed(2)} ج.م</span></div>
+    <div class="result-line"><span>المبلغ الأصلي</span><span>${calcResult.original.money()} ${calcResult.currency}</span></div>
+    <div class="result-line"><span>سعر الصرف المستخدم</span><span>${calcResult.rate.money()} ج.م</span></div>
+    <div class="result-line"><span>المبلغ بالجنيه</span><span>${calcResult.converted.money()} ج.م</span></div>
+    <div class="result-line"><span>نسبة الربح (١٠٪)</span><span>+ ${calcResult.profit.money()} ج.م</span></div>
+    <div class="result-line total"><span>الإجمالي المطلوب من العميل</span><span>${calcResult.total.money()} ج.م</span></div>
   </div>`;
 }
 
@@ -3189,7 +3195,7 @@ function renderSubsTab(){
   const totalMonthly = activeSubs.reduce((sum,s)=>sum+subUsdEquivalent(s),0);
 
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
-    <p class="sub" style="margin:0;">${activeSubs.length} اشتراك نشط &middot; إجمالي شهري تقريبي $${totalMonthly.toFixed(2)} ${egpEquivalentHtml(totalMonthly)}${cancelledSubs.length ? ' &middot; ' + cancelledSubs.length + ' ملغي' : ''}</p>
+    <p class="sub" style="margin:0;">${activeSubs.length} اشتراك نشط &middot; إجمالي شهري تقريبي $${totalMonthly.money()} ${egpEquivalentHtml(totalMonthly)}${cancelledSubs.length ? ' &middot; ' + cancelledSubs.length + ' ملغي' : ''}</p>
     <input id="subsContactSearchInput" value="${escapeHtml(subsContactSearch)}" placeholder="🔍 رقم العميل / الأكونت"
       style="width:170px;font-size:12.5px;padding:8px 10px;flex:none;"
       onkeydown="if(event.key==='Enter') switchSubsContactSearch(this.value)"
@@ -3284,7 +3290,7 @@ function renderSubsTab(){
         <td>${escapeHtml(s.store)}</td>
         <td>${fmtService(s.service)}</td>
         <td>${contactCellHtml(s)}</td>
-        <td>${(s.currency==='EGP') ? (s.amount||0).toFixed(2)+' ج.م' : '$'+(s.amount||0).toFixed(2)}</td>
+        <td>${(s.currency==='EGP') ? (s.amount||0).money()+' ج.م' : '$'+(s.amount||0).money()}</td>
         <td>
           <div class="row-actions">
             <button class="icon-btn" onclick="cancelSub('${s.id}')" title="إعادة التفعيل">↺</button>
@@ -3322,7 +3328,7 @@ function renderSubsTab(){
         </div>
         <div class="card" style="cursor:default;border-color:var(--mint);">
           <p class="client" style="margin-bottom:6px;">إجمالي الشهر (بالدولار تقريبًا)</p>
-          <p class="store" style="font-size:22px;color:var(--mint);">$${reportTotalUsd.toFixed(2)} ${egpEquivalentHtml(reportTotalUsd)}</p>
+          <p class="store" style="font-size:22px;color:var(--mint);">$${reportTotalUsd.money()} ${egpEquivalentHtml(reportTotalUsd)}</p>
         </div>
       </div>`;
 
@@ -3507,9 +3513,9 @@ function openClientModal(key){
   let body = `<div class="result-box" style="margin-top:0;">
     <div class="result-line"><span>وسيلة التواصل</span><span>${contact ? `<a href="${contact.url}" target="_blank" rel="noopener" style="color:var(--mint);direction:ltr;display:inline-block;">${escapeHtml(c.contactValue)}</a>` : '—'}</span></div>
     <div class="result-line"><span>اشتراكات نشطة</span><span>${activeSubsCount}${cancelledCount ? ' (+' + cancelledCount + ' ملغي)' : ''}</span></div>
-    <div class="result-line"><span>إجمالي الاشتراكات النشطة</span><span>$${subsTotalUsd.toFixed(2)}</span></div>
-    <div class="result-line"><span>إجمالي المدفوعات (جنيه)</span><span>${paymentsTotalEgp.toFixed(2)} ج.م</span></div>
-    <div class="result-line total" style="border-top:none;"><span>إجمالي الربح منه</span><span style="color:var(--mint);">${profitTotalEgp.toFixed(2)} ج.م</span></div>
+    <div class="result-line"><span>إجمالي الاشتراكات النشطة</span><span>$${subsTotalUsd.money()}</span></div>
+    <div class="result-line"><span>إجمالي المدفوعات (جنيه)</span><span>${paymentsTotalEgp.money()} ج.م</span></div>
+    <div class="result-line total" style="border-top:none;"><span>إجمالي الربح منه</span><span style="color:var(--mint);">${profitTotalEgp.money()} ج.م</span></div>
   </div>`;
 
   if(c.subs.length > 0){
@@ -3517,7 +3523,7 @@ function openClientModal(key){
     [...c.subs].sort((a,b)=> (a.cancelled?1:0) - (b.cancelled?1:0)).forEach(s => {
       body += `<div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:9px 12px;margin-bottom:6px;font-size:13px;${s.cancelled?'opacity:0.5;':''}">
         <span>${escapeHtml(s.store)} <span style="color:var(--muted);">(${fmtService(s.service)})</span></span>
-        <span>${s.cancelled ? 'ملغي' : (s.currency==='EGP' ? (s.amount||0).toFixed(2)+' ج.م' : '$'+(s.amount||0).toFixed(2))+' &middot; '+cycleLabel(s.cycleMonths||1)}</span>
+        <span>${s.cancelled ? 'ملغي' : (s.currency==='EGP' ? (s.amount||0).money()+' ج.م' : '$'+(s.amount||0).money())+' &middot; '+cycleLabel(s.cycleMonths||1)}</span>
       </div>`;
     });
   }
@@ -3527,7 +3533,7 @@ function openClientModal(key){
     [...c.payments].sort((a,b)=> (b.paidDate||'').localeCompare(a.paidDate||'')).forEach(p => {
       body += `<div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:9px 12px;margin-bottom:6px;font-size:13px;">
         <span>${escapeHtml(p.description)} <span style="color:var(--muted);">${p.paidDate||''}</span></span>
-        <span>${(p.amount||0).toFixed(2)} ${paymentCurrencyLabel(p.currency)}</span>
+        <span>${(p.amount||0).money()} ${paymentCurrencyLabel(p.currency)}</span>
       </div>`;
     });
   }
@@ -3635,7 +3641,7 @@ function invoiceCardHtml(inv){
     <p class="store">${escapeHtml(inv.description)}</p>
     ${inv.number ? `<p class="client">رقم: ${escapeHtml(inv.number)}</p>` : ''}
     <div class="meta" style="margin-top:6px;">
-      <span class="amount" style="font-size:18px;">${(inv.amount||0).toFixed(2)}</span>
+      <span class="amount" style="font-size:18px;">${(inv.amount||0).money()}</span>
     </div>
     <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
       ${inv.status === 'pending' ? `
@@ -4693,7 +4699,7 @@ function renderInvoicesTab(){
   if(pending.length === 0){
     html += `<div class="empty">مفيش فواتير قيد الانتظار.</div>`;
   } else {
-    html += `<p style="color:var(--muted);font-size:12.5px;margin:-8px 0 10px;">إجمالي: ${totalPending.toFixed(2)}</p>`;
+    html += `<p style="color:var(--muted);font-size:12.5px;margin:-8px 0 10px;">إجمالي: ${totalPending.money()}</p>`;
     html += `<div class="cards">${pending.map(invoiceCardHtml).join('')}</div>`;
   }
 
@@ -4701,7 +4707,7 @@ function renderInvoicesTab(){
   if(paid.length === 0){
     html += `<div class="empty">لسه مفيش فواتير مدفوعة.</div>`;
   } else {
-    html += `<p style="color:var(--muted);font-size:12.5px;margin:-8px 0 10px;">إجمالي: ${totalPaid.toFixed(2)}</p>`;
+    html += `<p style="color:var(--muted);font-size:12.5px;margin:-8px 0 10px;">إجمالي: ${totalPaid.money()}</p>`;
     html += `<div class="cards">${paid.map(invoiceCardHtml).join('')}</div>`;
   }
 
@@ -4764,9 +4770,9 @@ function renderServicesTab(){
       <p class="store">${fmtService(svc.name)}</p>
       <p class="client" style="margin-bottom:10px;">${svc.activeSubsCount} اشتراك نشط &middot; ${svc.paymentsCount} دفعة</p>
       <div class="result-box" style="margin-top:0;">
-        <div class="result-line"><span>المستلم</span><span>${svc.received.toFixed(2)} ج.م</span></div>
-        <div class="result-line"><span>المصروف</span><span>${svc.spent.toFixed(2)} ج.م</span></div>
-        <div class="result-line total" style="color:var(--mint);"><span>الربح</span><span>${svc.profit.toFixed(2)} ج.م</span></div>
+        <div class="result-line"><span>المستلم</span><span>${svc.received.money()} ج.م</span></div>
+        <div class="result-line"><span>المصروف</span><span>${svc.spent.money()} ج.م</span></div>
+        <div class="result-line total" style="color:var(--mint);"><span>الربح</span><span>${svc.profit.money()} ج.م</span></div>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px;">
         <button class="btn btn-ghost" style="flex:1;padding:8px;font-size:12.5px;" onclick="openServiceRenameModal('${encodeURIComponent(svc.name)}')">تعديل الاسم</button>
@@ -4864,7 +4870,7 @@ function renderProfitTab(){
   html += `<div class="calc-card" style="margin-bottom:22px;">
     <p style="font-family:'Cairo',sans-serif;font-weight:700;font-size:15px;margin:0 0 4px;">إجمالي الربح ${profitMonthFilter ? '(' + monthLabel(profitMonthFilter) + ')' : ''}</p>
     <div class="result-box" style="margin-top:10px;">
-      <div class="result-line total" style="border-top:none;padding-top:0;"><span>الربح الكلي</span><span>${totalProfit.toFixed(2)} ج.م</span></div>
+      <div class="result-line total" style="border-top:none;padding-top:0;"><span>الربح الكلي</span><span>${totalProfit.money()} ج.م</span></div>
     </div>
   </div>`;
 
@@ -4875,7 +4881,7 @@ function renderProfitTab(){
       <div class="cards">
         ${serviceProfitEntries.map(([svc, profit]) => `<div class="card" style="cursor:default;border-color:var(--mint);">
           <p class="client" style="margin-bottom:6px;">${fmtService(svc)}</p>
-          <p class="store" style="font-size:20px;color:var(--mint);">${profit.toFixed(2)} ج.م</p>
+          <p class="store" style="font-size:20px;color:var(--mint);">${profit.money()} ج.م</p>
         </div>`).join('')}
       </div>`;
   }
@@ -4976,18 +4982,18 @@ function renderPaymentsTab(){
     </div>
     <div class="card" style="cursor:default;">
       <p class="client" style="margin-bottom:6px;">إجمالي المستلم (جنيه)</p>
-      <p class="store" style="font-size:22px;">${totalEgp.toFixed(2)}</p>
+      <p class="store" style="font-size:24px;">${moneyHtml(totalEgp)}</p>
     </div>
     <div class="card" style="cursor:default;border-color:var(--mint);">
       <p class="client" style="margin-bottom:6px;">هامش الربح</p>
-      <p class="store" style="font-size:22px;color:var(--mint);">${totalProfit.toFixed(2)} ج.م</p>
+      <p class="store" style="font-size:24px;color:var(--mint);">${moneyHtml(totalProfit)}</p>
     </div>
   </div>`;
 
   html += `<div class="cards no-print" style="margin-bottom:20px;">
     ${methods.map(m => `<div class="card" style="cursor:default;">
       <p class="client" style="margin-bottom:6px;">${receivedMethodLabel(m)}</p>
-      <p class="store" style="font-size:18px;">${methodTotals[m].toFixed(2)} ج.م</p>
+      <p class="store" style="font-size:20px;">${moneyHtml(methodTotals[m])}</p>
     </div>`).join('')}
   </div>`;
 
@@ -4998,8 +5004,8 @@ function renderPaymentsTab(){
       <div class="cards no-print" style="margin-bottom:20px;">
         ${cardAggIds.map(id => { const a = cardAgg[id]; return `<div class="card" style="cursor:default;">
           <p class="store">${bankCardTitle(bankCardById(id))}</p>
-          <p class="client">${a.count} معاملة &middot; ${a.total.toFixed(2)} ج.م</p>
-          <div class="meta"><span>عمولة ${a.commission.toFixed(2)} ج.م</span><span class="amount" style="color:var(--mint);">كاش باك متوقع ${a.cashback.toFixed(2)} ج.م</span></div>
+          <p class="client">${a.count} معاملة &middot; ${a.total.money()} ج.م</p>
+          <div class="meta"><span>عمولة ${a.commission.money()} ج.م</span><span class="amount" style="color:var(--mint);">كاش باك متوقع ${a.cashback.money()} ج.م</span></div>
         </div>`; }).join('')}
       </div>`;
   }
@@ -5019,11 +5025,11 @@ function renderPaymentsTab(){
         <td>${fmtService(p.service || 'أخرى')}</td>
         <td>${contactCellHtml(p)}</td>
         <td>${(() => { const pc = bankCardById(p.cardId); return pc ? escapeHtml(pc.bank) + ' &bull;&bull;' + escapeHtml(pc.last4 || '') : '—'; })()}</td>
-        <td>${(p.costAmount||0).toFixed(2)} ${paymentCurrencyLabel(p.costCurrency||'EGP')}</td>
-        <td>${p.cardId ? (p.commission||0).toFixed(2) + ' ج.م' : '—'}</td>
-        <td>${(p.amount||0).toFixed(2)} ${paymentCurrencyLabel(p.currency)}</td>
+        <td>${(p.costAmount||0).money()} ${paymentCurrencyLabel(p.costCurrency||'EGP')}</td>
+        <td>${p.cardId ? (p.commission||0).money() + ' ج.م' : '—'}</td>
+        <td>${(p.amount||0).money()} ${paymentCurrencyLabel(p.currency)}</td>
         <td>${fmtService(receivedMethodLabel(p.receivedMethod||'other'))}</td>
-        <td style="color:var(--mint);">${(p.profit||0).toFixed(2)} ج.م</td>
+        <td style="color:var(--mint);">${(p.profit||0).money()} ج.م</td>
         <td>${p.paidDate || '—'}</td>
         <td>
           <div class="row-actions">
@@ -5095,7 +5101,7 @@ function categoryCardsHtml(entries, total, colorVar, dimVar){
         <span class="cat-name" title="${escapeHtml(cat)}">${escapeHtml(cat)}</span>
         <span class="cat-pct" style="background:${dimVar};color:${colorVar};">${pct}%</span>
       </div>
-      <div class="cat-amount" style="color:${colorVar};">${amt.toFixed(2)}<span class="unit">ج.م</span></div>
+      <div class="cat-amount" style="color:${colorVar};">${amt.money()}<span class="unit">ج.م</span></div>
       <div class="cat-bar-track"><div class="cat-bar-fill" style="width:${pct}%;background:${colorVar};"></div></div>
     </div>`;
   }).join('');
@@ -5131,15 +5137,15 @@ function renderLedgerTab(){
   html += `<div class="cards" style="margin-bottom:24px;">
     <div class="card" style="cursor:default;border-color:var(--mint);">
       <p class="client" style="margin-bottom:6px;">إجمالي الإيراد ${ledgerMonthFilter ? monthLabel(ledgerMonthFilter) : 'كل الفترات'}</p>
-      <p class="store" style="font-size:20px;color:var(--mint);">${periodIncome.toFixed(2)} ج.م</p>
+      <p class="store" style="font-size:20px;color:var(--mint);">${periodIncome.money()} ج.م</p>
     </div>
     <div class="card" style="cursor:default;border-color:var(--red);">
       <p class="client" style="margin-bottom:6px;">إجمالي المصروف ${ledgerMonthFilter ? monthLabel(ledgerMonthFilter) : 'كل الفترات'}</p>
-      <p class="store" style="font-size:20px;color:var(--red);">${periodExpense.toFixed(2)} ج.م</p>
+      <p class="store" style="font-size:20px;color:var(--red);">${periodExpense.money()} ج.م</p>
     </div>
     <div class="card" style="cursor:default;">
       <p class="client" style="margin-bottom:6px;">الصافي</p>
-      <p class="store" style="font-size:20px;">${(periodIncome-periodExpense).toFixed(2)} ج.م</p>
+      <p class="store" style="font-size:20px;">${(periodIncome-periodExpense).money()} ج.م</p>
     </div>
   </div>`;
 
@@ -5174,7 +5180,7 @@ function renderLedgerTab(){
         <td><span class="svc-tag" style="${t.type==='income' ? 'color:var(--mint);border-color:var(--mint);' : 'color:var(--red);border-color:var(--red);'}">${t.type==='income' ? 'إيراد' : 'مصروف'}</span></td>
         <td>${fmtService(t.mainCategory || 'بدون قسم')}</td>
         <td>${escapeHtml(t.description || '—')}</td>
-        <td style="color:${t.type==='income' ? 'var(--mint)' : 'var(--red)'};">${t.type==='income'?'+':'-'}${(t.amount||0).toFixed(2)} ج.م</td>
+        <td style="color:${t.type==='income' ? 'var(--mint)' : 'var(--red)'};">${t.type==='income'?'+':'-'}${(t.amount||0).money()} ج.م</td>
         <td>
           <div class="row-actions">
             ${pendingDeleteTxId === t.id ? `
@@ -5298,11 +5304,11 @@ function renderBankCardsTab(){
   html += `<div class="cards" style="margin-bottom:24px;">
     <div class="card" style="cursor:default;">
       <p class="client" style="margin-bottom:6px;">معاملات الشهر ده</p>
-      <p class="store" style="font-size:20px;">${monthTxns.length} · ${monthTotal.toFixed(2)} ج.م</p>
+      <p class="store" style="font-size:20px;">${monthTxns.length} · ${monthTotal.money()} ج.م</p>
     </div>
     <div class="card" style="cursor:default;border-color:var(--mint);">
       <p class="client" style="margin-bottom:6px;">عمولات البنوك الشهر ده</p>
-      <p class="store" style="font-size:20px;color:var(--mint);">${monthCommission.toFixed(2)} ج.م</p>
+      <p class="store" style="font-size:20px;color:var(--mint);">${monthCommission.money()} ج.م</p>
     </div>
     <div class="card" style="cursor:pointer;${unknownTxns.length ? 'border-color:var(--red);' : ''}" onclick="txnOnlyUnknown=true;txnCardFilter='';render();">
       <p class="client" style="margin-bottom:6px;">معاملات مش بعلمي</p>
@@ -5319,14 +5325,14 @@ function renderBankCardsTab(){
     const tm = sum(aggMonth), ta = sum(aggAll);
     const tile = (title, a, color) => `<div class="card" style="cursor:default;${color ? 'border-color:' + color + ';' : ''}">
       <p class="client" style="margin-bottom:6px;">${title}</p>
-      <p class="store" style="font-size:18px;">${a.count} معاملة &middot; ${a.total.toFixed(2)} ج.م</p>
-      <div class="meta"><span>عمولة ${a.commission.toFixed(2)}</span><span class="amount" style="color:var(--mint);">كاش باك ${a.cashback.toFixed(2)}</span></div>
+      <p class="store" style="font-size:18px;">${a.count} معاملة &middot; ${a.total.money()} ج.م</p>
+      <div class="meta"><span>عمولة ${a.commission.money()}</span><span class="amount" style="color:var(--mint);">كاش باك ${a.cashback.money()}</span></div>
     </div>`;
     const rows = bankCards.map(c => {
       const m = aggMonth[c.id] || z(), a = aggAll[c.id] || z();
       return `<tr><td>${bankCardTitle(c)}</td><td>${c.commissionPct}%</td><td>${c.cashbackPct}%</td>
-        <td>${m.total.toFixed(2)}</td><td>${m.commission.toFixed(2)}</td><td style="color:var(--mint);">${m.cashback.toFixed(2)}</td>
-        <td>${a.total.toFixed(2)}</td><td>${a.commission.toFixed(2)}</td><td style="color:var(--mint);">${a.cashback.toFixed(2)}</td></tr>`;
+        <td>${m.total.money()}</td><td>${m.commission.money()}</td><td style="color:var(--mint);">${m.cashback.money()}</td>
+        <td>${a.total.money()}</td><td>${a.commission.money()}</td><td style="color:var(--mint);">${a.cashback.money()}</td></tr>`;
     }).join('');
     html += `<div class="section-title">📊 داشبورد الفيز</div>
       <div class="cards" style="margin-bottom:14px;">${tile('الشهر ده (كل الكروت)', tm)}${tile('الإجمالي (كل الكروت)', ta, 'var(--mint)')}</div>
@@ -5355,7 +5361,7 @@ function renderBankCardsTab(){
           const z = { count: 0, total: 0, commission: 0, cashback: 0 };
           const all = cardPaymentsAgg(mine)[c.id] || z;
           const mo = cardPaymentsAgg(mine.filter(p => (p.paidDate||'').slice(0,7) === ym))[c.id] || z;
-          const line = (t, a) => `<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;margin-top:4px;"><span style="color:var(--muted);">${t}: ${a.count} معاملة &middot; ${a.total.toFixed(2)} ج.م</span><span>عمولة ${a.commission.toFixed(2)} &middot; <b style="color:var(--mint);">كاش باك متوقع ${a.cashback.toFixed(2)}</b></span></div>`;
+          const line = (t, a) => `<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;margin-top:4px;"><span style="color:var(--muted);">${t}: ${a.count} معاملة &middot; ${a.total.money()} ج.م</span><span>عمولة ${a.commission.money()} &middot; <b style="color:var(--mint);">كاش باك متوقع ${a.cashback.money()}</b></span></div>`;
           return `<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:10px;">
             <p style="color:var(--muted);font-size:12px;margin:0 0 2px;">مدفوعات الخدمات من الكارت ده</p>
             ${line('الشهر ده', mo)}${line('الإجمالي', all)}
@@ -5377,7 +5383,7 @@ function renderBankCardsTab(){
               <button class="btn btn-ghost" style="flex:none;padding:5px 10px;font-size:11.5px;" onclick="unlinkAccount('${l.id}')">اتفصل</button>
             </div>`).join('')}
         </div>
-        <div class="meta"><span>الشهر ده: ${cMonth.length} معاملة</span><span class="amount">${cTotal.toFixed(2)} ج.م</span></div>
+        <div class="meta"><span>الشهر ده: ${cMonth.length} معاملة</span><span class="amount">${cTotal.money()} ج.م</span></div>
         <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
           <button class="pay-btn" style="margin-top:0;flex:1;" onclick="openHolderModal('${c.id}')">بعتّ بياناته لحد</button>
           <button class="btn btn-ghost" style="flex:none;padding:8px 12px;" onclick="openLinkModal('${c.id}')">+ ربط حساب</button>
@@ -5429,7 +5435,7 @@ function renderBankCardsTab(){
       bankNames.map(n => { const b = banks[n]; return `<div class="card" style="cursor:default;">
         <p class="store">${escapeHtml(n)}</p>
         <p class="client">${b.cards} كارت &middot; عمولة ${[...b.pcts].join('% / ')}%</p>
-        <div class="meta"><span>${b.total.toFixed(2)} ج.م معاملات</span><span class="amount" style="color:var(--mint);">${b.commission.toFixed(2)} ج.م عمولة</span></div>
+        <div class="meta"><span>${b.total.money()} ج.م معاملات</span><span class="amount" style="color:var(--mint);">${b.commission.money()} ج.م عمولة</span></div>
       </div>`; }).join('') + `</div>`;
   }
 
@@ -5452,9 +5458,9 @@ function renderBankCardsTab(){
       const kind = t.known ? '' : 'overdue';
       return `<div class="card ${kind}">
         <span class="badge ${t.known ? 'today' : 'overdue'}">${t.known ? 'بعلمي' : 'مش بعلمي'}</span>
-        <p class="store">${t.amount.toFixed(2)} ج.م${t.description ? ' &middot; ' + escapeHtml(t.description) : ''}</p>
+        <p class="store">${t.amount.money()} ج.م${t.description ? ' &middot; ' + escapeHtml(t.description) : ''}</p>
         <p class="client">${bankCardTitle(bankCardById(t.cardId))} &middot; ${t.date}</p>
-        <div class="meta"><span>اللي عملها: <b style="color:var(--text);">${txnWhoText(t)}</b></span><span class="amount">عمولة ${t.commission.toFixed(2)}</span></div>
+        <div class="meta"><span>اللي عملها: <b style="color:var(--text);">${txnWhoText(t)}</b></span><span class="amount">عمولة ${t.commission.money()}</span></div>
         ${txnLinkHint(t)}
         <div style="display:flex;gap:8px;margin-top:12px;">
           ${!t.known ? `<button class="btn btn-ghost" style="flex:1;padding:6px;font-size:12px;" onclick="markTxnKnown('${t.id}')">✓ طلعت بعلمي</button>` : ''}
@@ -5722,11 +5728,11 @@ function renderCardsTab(){
   html += `<div class="cards" style="margin-bottom:24px;">
     <div class="card" style="cursor:default;border-color:var(--amber);">
       <p class="client" style="margin-bottom:6px;">كروت عليها مديونية</p>
-      <p class="store" style="font-size:20px;color:var(--amber);">${ccUnpaid.length} · ${ccTotalRemaining.toFixed(2)} ج.م</p>
+      <p class="store" style="font-size:20px;color:var(--amber);">${ccUnpaid.length} · ${ccTotalRemaining.money()} ج.م</p>
     </div>
     <div class="card" style="cursor:default;border-color:var(--red);">
       <p class="client" style="margin-bottom:6px;">ديون وأقساط قايمة</p>
-      <p class="store" style="font-size:20px;color:var(--red);">${dtUnpaid.length} · ${dtTotalRemaining.toFixed(2)} ج.م</p>
+      <p class="store" style="font-size:20px;color:var(--red);">${dtUnpaid.length} · ${dtTotalRemaining.money()} ج.م</p>
     </div>
   </div>`;
 
@@ -5767,11 +5773,11 @@ function cardHtmlCredit(c){
     <p class="store">${escapeHtml(c.name)}</p>
     <p class="client">قفل الكشف: يوم ${c.closeDay} شهريًا &middot; السداد قبل: يوم ${c.dueDay} (${c.dueDateObj.toLocaleDateString('ar-EG',{day:'numeric',month:'short'})})</p>
     <div class="meta">
-      <span>سددت ${c.paidAmt.toFixed(2)} من ${Number(c.totalDebt).toFixed(2)}</span>
-      <span class="amount">${c.remaining.toFixed(2)} ج.م متبقي</span>
+      <span>سددت ${c.paidAmt.money()} من ${Number(c.totalDebt).money()}</span>
+      <span class="amount">${c.remaining.money()} ج.م متبقي</span>
     </div>
     <div class="cat-bar-track" style="margin-top:10px;"><div class="cat-bar-fill" style="width:${pct}%;background:${barColor};"></div></div>
-    ${lastPayments.length ? `<p style="color:var(--muted);font-size:11.5px;margin:8px 0 0;">آخر سداد: ${lastPayments.map(p=>Number(p.amount).toFixed(2)+' ج.م').join(' · ')}</p>` : ''}
+    ${lastPayments.length ? `<p style="color:var(--muted);font-size:11.5px;margin:8px 0 0;">آخر سداد: ${lastPayments.map(p=>Number(p.amount).money()+' ج.م').join(' · ')}</p>` : ''}
     <div style="display:flex;gap:8px;margin-top:12px;">
       ${!c.paid ? `<button class="pay-btn" style="margin-top:0;flex:1;" onclick="openPayModal('card','${c.id}')">سدد جزء</button>` : ''}
       ${pendingDeleteCardId === c.id
@@ -5789,13 +5795,13 @@ function cardHtmlDebt(d){
   return `<div class="card ${kind}" style="${d.paid ? 'opacity:0.6;' : ''}">
     <span class="badge ${kind || 'today'}" style="${kind ? '' : 'display:none;'}">${statusBadgeText(d)}</span>
     <p class="store">${escapeHtml(d.name)}</p>
-    <p class="client">الاستحقاق: ${d.dueDate || '—'}${d.monthlyInstallment ? ' &middot; القسط الشهري: ' + Number(d.monthlyInstallment).toFixed(2) + ' ج.م' : ''}</p>
+    <p class="client">الاستحقاق: ${d.dueDate || '—'}${d.monthlyInstallment ? ' &middot; القسط الشهري: ' + Number(d.monthlyInstallment).money() + ' ج.م' : ''}</p>
     <div class="meta">
-      <span>سددت ${d.paidAmt.toFixed(2)} من ${Number(d.totalDebt).toFixed(2)}</span>
-      <span class="amount">${d.remaining.toFixed(2)} ج.م متبقي</span>
+      <span>سددت ${d.paidAmt.money()} من ${Number(d.totalDebt).money()}</span>
+      <span class="amount">${d.remaining.money()} ج.م متبقي</span>
     </div>
     <div class="cat-bar-track" style="margin-top:10px;"><div class="cat-bar-fill" style="width:${pct}%;background:${barColor};"></div></div>
-    ${lastPayments.length ? `<p style="color:var(--muted);font-size:11.5px;margin:8px 0 0;">آخر سداد: ${lastPayments.map(p=>Number(p.amount).toFixed(2)+' ج.م').join(' · ')}</p>` : ''}
+    ${lastPayments.length ? `<p style="color:var(--muted);font-size:11.5px;margin:8px 0 0;">آخر سداد: ${lastPayments.map(p=>Number(p.amount).money()+' ج.م').join(' · ')}</p>` : ''}
     <div style="display:flex;gap:8px;margin-top:12px;">
       ${!d.paid ? `<button class="pay-btn" style="margin-top:0;flex:1;" onclick="openPayModal('debt','${d.id}')">سدد جزء</button>` : ''}
       ${pendingDeleteDebtId === d.id
