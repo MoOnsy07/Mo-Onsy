@@ -589,6 +589,22 @@
   </div>
 </div>
 
+<div class="modal-bg" id="priceModalBg">
+  <div class="modal" style="max-width:560px;max-height:88vh;overflow-y:auto;">
+    <h2 id="pcTitle">إضافة أسعار معدّلة</h2>
+    <label>تاريخ التعديل</label>
+    <input id="pc_date" type="date">
+    <p id="pcHint" style="color:var(--muted);font-size:12px;margin:12px 0 6px;">ضيف كل صنف في سطر: الاسم والسعر قبل التعديل والسعر بعده، والفرق بيتحسب لوحده.</p>
+    <div id="pc_rows"></div>
+    <button type="button" id="pcAddRowBtn" class="btn btn-ghost" style="width:100%;margin-top:8px;" onclick="addPriceRow()">+ صنف جديد</button>
+    <p id="pcFormError" style="color:var(--red);font-size:12.5px;margin:12px 0 0;display:none;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closePriceModal()">إلغاء</button>
+      <button class="btn btn-primary" onclick="savePriceChanges()">حفظ</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="mallCodingModalBg">
   <div class="modal" style="max-width:560px;max-height:88vh;overflow-y:auto;">
     <h2>إضافة أصناف متكودة جديدة</h2>
@@ -1307,6 +1323,7 @@ async function loadData(){
   await loadMallInvoices();
   await loadMallCodingItems();
   await loadPurchInvoices();
+  await loadPriceChanges();
   fetchLiveRate();
   render();
 }
@@ -3103,7 +3120,7 @@ function switchTab(tab){
 
 const TAB_LABELS = {
   subs: 'الاشتراكات', payments: 'مدفوعات', profit: 'الربح', services: 'الخدمات',
-  clients: 'العملاء', invoices: 'الفواتير', mall: 'المول', mallcoding: 'تكويد المول', purchases: 'تقارير المشتريات', ledger: 'مصاريفي', cards: 'كروت وديون', bankcards: 'كروت الدفع'
+  clients: 'العملاء', invoices: 'الفواتير', mall: 'المول', mallcoding: 'تكويد المول', purchases: 'تقارير المشتريات', pricechanges: 'تعديل الأسعار', ledger: 'مصاريفي', cards: 'كروت وديون', bankcards: 'كروت الدفع'
 };
 
 function toggleSideMenu(){
@@ -3176,6 +3193,12 @@ function render(){
     fab.innerHTML = '+ إضافة فاتورة';
     fab.onclick = () => openPurchModal();
     html += renderPurchTab();
+  } else if(activeTab === 'pricechanges'){
+    fab.style.display = 'flex';
+    fab.title = 'إضافة أسعار معدّلة';
+    fab.innerHTML = '+ إضافة أسعار';
+    fab.onclick = () => openPriceModal();
+    html += renderPriceChangesTab();
   } else if(activeTab === 'ledger'){
     fab.style.display = 'flex';
     fab.title = 'إضافة معاملة';
@@ -4923,6 +4946,146 @@ function renderPurchReport(){
   return html;
 }
 
+
+
+/* ====== تقرير تعديل الأسعار: اسم الصنف، السعر قبل، السعر بعد، والفرق ====== */
+let priceChanges = [];        // { id, name, before, after, date }
+let priceChangeDate = '';     // '' = كل التواريخ
+let priceChangeSearch = '';
+let editingPriceId = null;
+let pcRowCounter = 0;
+
+async function loadPriceChanges(){
+  if(!isConfigured()) return;
+  try{
+    const rows = await sbGetAll('price_changes');
+    priceChanges = rows.map(r => ({ id: r.id, name: r.item_name || '', before: Number(r.old_price || 0), after: Number(r.new_price || 0), date: r.changed_date || '' }));
+  }catch(e){
+    console.error('load price changes error', e);
+    showToast('حصل خطأ في تحميل تعديلات الأسعار (اتأكدت من تشغيل ملف الـ SQL الجديد؟)', true);
+    priceChanges = [];
+  }
+}
+function priceRowHtml(n, v){
+  v = v || {};
+  return `<div id="pcRow${n}" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border);">
+    <div style="flex:2;min-width:150px;"><label style="margin-top:0;font-size:11px;">اسم الصنف</label><input id="pc_name${n}" value="${escapeHtml(v.name || '')}" placeholder="مثال: عصير برتقال 1 لتر"></div>
+    <div style="flex:1;min-width:90px;"><label style="margin-top:0;font-size:11px;">السعر قبل</label><input id="pc_before${n}" type="number" step="0.01" value="${v.before ?? ''}" oninput="updatePriceDiff(${n})"></div>
+    <div style="flex:1;min-width:90px;"><label style="margin-top:0;font-size:11px;">السعر بعد</label><input id="pc_after${n}" type="number" step="0.01" value="${v.after ?? ''}" oninput="updatePriceDiff(${n})"></div>
+    <div style="flex:none;min-width:70px;text-align:center;font-size:12.5px;padding-bottom:10px;" id="pc_diff${n}"></div>
+    ${editingPriceId ? '' : `<button type="button" class="icon-btn" style="flex:none;" onclick="removePriceRow(${n})" title="حذف السطر">✕</button>`}
+  </div>`;
+}
+function updatePriceDiff(n){
+  const b = parseFloat(document.getElementById('pc_before' + n).value), a = parseFloat(document.getElementById('pc_after' + n).value);
+  const el = document.getElementById('pc_diff' + n);
+  if(isNaN(a) || isNaN(b)){ el.textContent = ''; return; }
+  const d = a - b;
+  el.innerHTML = `<b style="color:${d > 0 ? 'var(--amber)' : d < 0 ? 'var(--mint)' : 'var(--muted)'};unicode-bidi:isolate;" dir="ltr">${d > 0 ? '+' : d < 0 ? '-' : ''}${Math.abs(d).money()}</b>`;
+}
+function addPriceRow(v){
+  pcRowCounter++;
+  document.getElementById('pc_rows').insertAdjacentHTML('beforeend', priceRowHtml(pcRowCounter, v));
+  if(v) updatePriceDiff(pcRowCounter);
+}
+function removePriceRow(n){ const el = document.getElementById('pcRow' + n); if(el) el.remove(); }
+function openPriceModal(id){
+  const c = id ? priceChanges.find(x => x.id === id) : null;
+  editingPriceId = c ? c.id : null;
+  document.getElementById('pcTitle').textContent = c ? 'تعديل صنف' : 'إضافة أسعار معدّلة';
+  document.getElementById('pcHint').style.display = c ? 'none' : '';
+  document.getElementById('pcAddRowBtn').style.display = c ? 'none' : '';
+  document.getElementById('pc_date').value = c ? c.date : toISODateLocal(new Date());
+  document.getElementById('pc_rows').innerHTML = '';
+  document.getElementById('pcFormError').style.display = 'none';
+  pcRowCounter = 0;
+  if(c) addPriceRow(c); else { addPriceRow(); addPriceRow(); addPriceRow(); }
+  document.getElementById('priceModalBg').classList.add('open');
+}
+function closePriceModal(){ editingPriceId = null; document.getElementById('priceModalBg').classList.remove('open'); }
+async function savePriceChanges(){
+  const err = document.getElementById('pcFormError');
+  const showErr = t => { err.textContent = t; err.style.display = 'block'; };
+  const date = document.getElementById('pc_date').value;
+  if(!date){ showErr('اختار تاريخ التعديل'); return; }
+  const items = [];
+  for(const row of document.querySelectorAll('#pc_rows > div')){
+    const n = row.id.replace('pcRow', '');
+    const name = document.getElementById('pc_name' + n).value.trim();
+    const bRaw = document.getElementById('pc_before' + n).value, aRaw = document.getElementById('pc_after' + n).value;
+    if(!name && bRaw === '' && aRaw === '') continue; // سطر فاضي
+    const before = parseFloat(bRaw), after = parseFloat(aRaw);
+    if(!name){ showErr('كل سطر لازم يكون له اسم صنف'); return; }
+    if(isNaN(before) || isNaN(after) || before < 0 || after < 0){ showErr(`اكتب السعر قبل وبعد للصنف: ${name}`); return; }
+    if(before === after){ showErr(`السعر قبل وبعد متساويين للصنف: ${name}`); return; }
+    items.push({ name, before, after });
+  }
+  if(!items.length){ showErr('ضيف صنف واحد على الأقل'); return; }
+  let saved;
+  if(editingPriceId){
+    const c = priceChanges.find(x => x.id === editingPriceId);
+    Object.assign(c, items[0], { date });
+    saved = [c];
+  } else {
+    saved = items.map(it => ({ id: newId(), ...it, date }));
+    priceChanges.push(...saved);
+  }
+  const wasEdit = !!editingPriceId;
+  closePriceModal();
+  priceChangeDate = '';
+  render();
+  try{
+    for(const c of saved) await sbUpsertRow('price_changes', { id: c.id, item_name: c.name, old_price: c.before, new_price: c.after, changed_date: c.date });
+    showToast(wasEdit ? 'اتعدّل الصنف' : `اتسجل ${saved.length} صنف ✓`);
+  }catch(e){
+    console.error(e);
+    showToast('اتسجلت في الصفحة بس، حصل خطأ في الحفظ (اتأكدت من تشغيل ملف الـ SQL؟)', true);
+  }
+}
+async function deletePriceChange(id){
+  if(!confirm('تحذف الصنف ده من التقرير؟')) return;
+  priceChanges = priceChanges.filter(c => c.id !== id);
+  render();
+  try{ await sbDeleteRow('price_changes', id); }catch(e){ console.error(e); showToast('حصل خطأ في الحذف من الداتا بيز', true); }
+}
+
+function renderPriceChangesTab(){
+  if(!priceChanges.length) return `<div class="empty"><p>لسه مفيش أسعار معدّلة. دوس "+ إضافة أسعار" وسجّل أول تعديل.</p></div>`;
+  const dates = [...new Set(priceChanges.map(c => c.date).filter(Boolean))].sort().reverse();
+  if(priceChangeDate && !dates.includes(priceChangeDate)) priceChangeDate = '';
+  const q = priceChangeSearch.trim().toLowerCase();
+  const list = priceChanges.filter(c => (!priceChangeDate || c.date === priceChangeDate) && (!q || c.name.toLowerCase().includes(q)))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || a.name.localeCompare(b.name, 'ar'));
+  const ups = list.filter(c => c.after > c.before).length, downs = list.filter(c => c.after < c.before).length;
+  const company = (() => { try{ return localStorage.getItem('mallExecCompany') || ''; }catch(e){ return ''; } })();
+  const shownDates = [...new Set(list.map(c => c.date))].sort();
+  const dateText = shownDates.length <= 1 ? fmtDMY(shownDates[0] || '') : `من ${fmtDMY(shownDates[0])} إلى ${fmtDMY(shownDates[shownDates.length - 1])}`;
+  const diffCell = c => {
+    const d = c.after - c.before, pct = c.before > 0 ? d / c.before * 100 : null;
+    const col = d > 0 ? 'var(--amber)' : 'var(--mint)';
+    return `<span style="color:${col};font-weight:700;unicode-bidi:isolate;" dir="ltr">${d > 0 ? '▲ +' : '▼ -'}${Math.abs(d).money()}</span>${pct === null ? '' : `<span style="opacity:.7;font-size:12px;unicode-bidi:isolate;" dir="ltr"> (${d > 0 ? '+' : '-'}${Math.abs(pct).toFixed(1)}%)</span>`}`;
+  };
+  return `<div class="no-print" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
+      <div style="flex:1;min-width:160px;"><label style="margin-top:0;">تاريخ التعديل</label>
+        <select onchange="priceChangeDate=this.value;render();"><option value="">كل التواريخ</option>${dates.map(d => `<option value="${d}" ${d === priceChangeDate ? 'selected' : ''}>${fmtDMY(d)}</option>`).join('')}</select></div>
+      <div style="flex:1;min-width:160px;"><label style="margin-top:0;">بحث بالصنف</label>
+        <input value="${escapeHtml(priceChangeSearch)}" placeholder="🔍 اسم الصنف" onchange="priceChangeSearch=this.value;render();"></div>
+      <div style="flex:1;min-width:160px;"><label style="margin-top:0;">اسم الشركة (أول التقرير)</label>
+        <input value="${escapeHtml(company)}" placeholder="اختياري" onchange="try{localStorage.setItem('mallExecCompany', this.value.trim())}catch(e){} render();"></div>
+      <button class="btn btn-primary" style="flex:none;" onclick="window.print()">🖨️ طباعة التقرير</button>
+    </div>
+    <div class="print-area" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px 20px;">
+      ${company ? `<h2 style="text-align:center;margin:0 0 4px;font-size:22px;">${escapeHtml(company)}</h2>` : ''}
+      <p style="text-align:center;margin:0 0 4px;font-size:16px;font-weight:700;">تقرير تعديل الأسعار</p>
+      <p style="text-align:center;margin:0 0 18px;font-size:13px;opacity:.75;">${dateText ? 'التاريخ: ' + dateText : ''}</p>
+      ${list.length ? `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;text-align:center;">
+        <thead><tr><th style="width:44px;">م</th><th>اسم الصنف</th><th>السعر قبل</th><th>السعر بعد</th><th>الفرق</th>${priceChangeDate ? '' : '<th>التاريخ</th>'}<th class="no-print" style="width:80px;"></th></tr></thead>
+        <tbody>${list.map((c, i) => `<tr><td>${i + 1}</td><td style="text-align:right;">${escapeHtml(c.name)}</td><td>${c.before.money()}</td><td>${c.after.money()}</td><td>${diffCell(c)}</td>${priceChangeDate ? '' : `<td>${fmtDMY(c.date)}</td>`}
+          <td class="no-print" style="white-space:nowrap;"><button class="icon-btn" onclick="openPriceModal('${c.id}')" title="تعديل">✏️</button> <button class="icon-btn" onclick="deletePriceChange('${c.id}')" title="حذف">🗑</button></td></tr>`).join('')}</tbody>
+        <tfoot><tr><td colspan="${priceChangeDate ? 5 : 6}" style="font-weight:700;">${list.length} صنف: ${ups} زيادة، ${downs} تخفيض</td><td class="no-print"></td></tr></tfoot>
+      </table></div>` : '<div class="empty">مفيش أصناف مطابقة.</div>'}
+    </div>`;
+}
 
 function renderMallTab(){
   if(mallRaceMode){
